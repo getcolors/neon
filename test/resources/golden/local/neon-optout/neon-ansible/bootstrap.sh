@@ -92,10 +92,14 @@ if [ -z "$attached" ]; then
   gen=$(get_marker .colors-generation || echo 0)
   case "$gen" in (*[!0-9]*|'') gen=0;; esac
   gen=$((gen + 1))
+  # The counter is persisted BEFORE the attach: an interruption between the
+  # two burns a generation number (harmless — the next attempt takes the
+  # next one) instead of leaving R2 behind the pageserver, where a later
+  # recovery would reuse an already-issued generation and be rejected.
+  put_marker .colors-generation "$gen"
   curl -sf -X PUT -H 'Content-Type: application/json' \
     -d "{\"mode\": \"AttachedSingle\", \"generation\": $gen, \"tenant_conf\": {}}" \
     "$ps/v1/tenant/$tenant/location_config" >/dev/null
-  put_marker .colors-generation "$gen"
   echo "CHANGED: attached tenant $tenant at generation $gen"
 fi
 for _ in $(seq 1 60); do

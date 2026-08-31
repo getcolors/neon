@@ -58,6 +58,22 @@ rollback() {
   exit 1
 }
 
+# Both secret files are staged before the live checks, so the commit below
+# is two adjacent renames and nothing else. The plaintext stages at a FIXED
+# path on purpose: if the process dies between the renames, the new
+# credential is still retrievable from neon_role_password.next rather than
+# lost in an anonymous tmpfile — the recovery journal for the one window
+# the renames cannot close.
+rm -f /etc/neon/secrets/neon_role_password.next
+pwbackup=$(mktemp /etc/neon/secrets/neon_role_password.old.XXXXXX)
+cp "$pwfile" "$pwbackup"; chmod 0600 "$pwbackup"
+pnext=/etc/neon/secrets/neon_role_password.next
+umask 077; printf '%s\n' "$new_pw" > "$pnext"
+chmod 0600 "$pnext"
+vnext=$(mktemp /etc/neon/secrets/neon_role_verifier.XXXXXX)
+printf '%s\n' "$verifier" > "$vnext"
+chmod 0600 "$vnext"
+
 recreate_compute || rollback
 try_psql "$new_pw" || rollback
 if try_psql "$old_pw"; then
@@ -65,15 +81,19 @@ if try_psql "$old_pw"; then
   rollback
 fi
 
-pnext=$(mktemp /etc/neon/secrets/neon_role_password.XXXXXX)
-printf '%s\n' "$new_pw" > "$pnext"
-chmod 0600 "$pnext"
-mv "$pnext" "$pwfile"
-# The stored verifier is what converge renders the spec from; updating it here
-# is what keeps the next converge from silently un-rotating the role.
-vnext=$(mktemp /etc/neon/secrets/neon_role_verifier.XXXXXX)
-printf '%s\n' "$verifier" > "$vnext"
-chmod 0600 "$vnext"
-mv "$vnext" /etc/neon/secrets/neon_role_verifier
-rm -f "$backup"
+# Commit: the verifier (what converge renders the spec from — updating it is
+# what keeps the next converge from silently un-rotating the role) and the
+# plaintext, as two adjacent renames. If either fails, everything — spec,
+# verifier, plaintext, compute — is restored to the old credential, which
+# the database then accepts again. A kill between the renames leaves the
+# new plaintext recoverable at neon_role_password.next.
+if ! { mv "$vnext" /etc/neon/secrets/neon_role_verifier && mv "$pnext" "$pwfile"; }; then
+  cp "$pwbackup" "$pwfile"; chmod 0600 "$pwfile"
+  printf '%s\n' "$(jq -r --arg role "$role" \
+    '.spec.cluster.roles[] | select(.name == $role) | .encrypted_password' "$backup")" \
+    > /etc/neon/secrets/neon_role_verifier
+  chmod 0600 /etc/neon/secrets/neon_role_verifier
+  rollback
+fi
+rm -f "$backup" "$pwbackup"
 echo "neon-rotate: rotated; new password in $pwfile"

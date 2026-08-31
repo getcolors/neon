@@ -161,13 +161,17 @@
 
 (defn psql-args
   "A psql invocation with an explicit everything: host, port, role, database,
-  and `-w` so a missing password fails instead of prompting. The environment
-  is what run-quiet passes, so no ambient PG* variable or ~/.pgpass can leak
-  into the probe."
+  and `-w` so a missing password fails instead of prompting. `env -i` clears
+  the environment and re-admits only PATH, the password handed over through
+  the runner, and a dead PGPASSFILE — so no ambient PG* variable, service
+  file, or ~/.pgpass can alter what the probe proves."
   [opts port sql]
-  ["psql" (str "postgresql://" (:neon-role opts) "@127.0.0.1:" port
-               "/" (:neon-database opts) "?connect_timeout=10")
-   "-w" "-v" "ON_ERROR_STOP=1" "-tAc" sql])
+  ["bash" "-c"
+   (str "exec env -i PATH=\"$PATH\" PGPASSFILE=/dev/null"
+        " PGPASSWORD=\"$PGPASSWORD\" psql"
+        " 'postgresql://" (:neon-role opts) "@127.0.0.1:" port
+        "/" (:neon-database opts) "?connect_timeout=10'"
+        " -w -v ON_ERROR_STOP=1 -tAc " (process/posix-quote sql))])
 
 (defn tunnel-args
   "An ssh tunnel through the generated `~/.ssh/config` alias — the supported

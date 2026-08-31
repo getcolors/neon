@@ -71,6 +71,18 @@ bucket.
 | `COLORS_PAR_R2_ACCESS_KEY_ID` / `COLORS_PAR_R2_SECRET_ACCESS_KEY` | The tofu state backend (operator machine only). |
 | `COLORS_PAR_NEON_R2_ACCESS_KEY_ID` / `COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY` | The one pair that reaches the host: pageserver and safekeeper remote storage. Prefer a bucket-scoped token. |
 
+Moving to a different bucket is a **migration, not an edit**: pointing
+`neon-r2-bucket` somewhere empty makes the next converge mint a brand-new
+empty database there (the bootstrap sees no data and initializes). The
+procedure is: stop compute, then — while the pageserver still runs — wait
+for its uploads to drain (`remote_consistent_lsn` in
+`GET /v1/tenant/<t>/timeline/<tl>` catches up to `last_record_lsn` on the
+checkpoint cadence; the metric is only meaningful on a running pageserver,
+it reads 0/0 right after a restart), then stop the storage tier, copy the
+prefix (`rclone sync r2old:<bucket>/<profile>/data r2new:<bucket>/<profile>/data`),
+verify the object count and bytes match, update `neon-r2-bucket` and the
+credentials, then re-converge — which re-adopts via the copied ready marker.
+
 Generated on the server, never operator-supplied: the `cloud_admin` and
 application-role passwords with their SCRAM verifiers
 (`/etc/neon/secrets/`), and the compute JWKS keypair.

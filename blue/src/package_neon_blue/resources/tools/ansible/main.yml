@@ -211,6 +211,26 @@
 
     - ansible.builtin.meta: flush_handlers
 
+    # Handlers may just have restarted the storage tier; re-assert every
+    # service before trusting SQL. The broker exposes no HTTP health, so its
+    # gate is the listener itself.
+    - name: Re-assert the pageserver after handlers
+      ansible.builtin.uri: {url: "http://127.0.0.1:9898/v1/status", status_code: [200]}
+      register: ps_health2
+      retries: 30
+      delay: 5
+      until: ps_health2 is succeeded
+
+    - name: Re-assert the safekeeper after handlers
+      ansible.builtin.uri: {url: "http://127.0.0.1:7676/v1/status", status_code: [200]}
+      register: sk_health2
+      retries: 30
+      delay: 5
+      until: sk_health2 is succeeded
+
+    - name: Re-assert the storage broker after handlers
+      ansible.builtin.wait_for: {host: 127.0.0.1, port: 50051, timeout: 60}
+
     - name: Wait for Postgres to accept connections
       ansible.builtin.command: pg_isready -h 127.0.0.1 -p 55433 -U cloud_admin
       register: pg_ready

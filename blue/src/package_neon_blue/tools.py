@@ -222,13 +222,18 @@ async def run_quiet(args: list[str], env: dict[str, str], timeout_ms: int):
 
 def psql_args(opts: dict, port: int, sql: str) -> list[str]:
     """A psql invocation with an explicit everything: host, port, role,
-    database, and `-w` so a missing password fails instead of prompting. The
-    environment is what run_quiet passes, so no ambient PG* variable or
-    ~/.pgpass can leak into the probe."""
-    return ["psql",
-            (f"postgresql://{opts.get('neon-role')}@127.0.0.1:{port}"
-             f"/{opts.get('neon-database')}?connect_timeout=10"),
-            "-w", "-v", "ON_ERROR_STOP=1", "-tAc", sql]
+    database, and `-w` so a missing password fails instead of prompting.
+    `env -i` clears the environment and re-admits only PATH, the password
+    handed over through the runner, and a dead PGPASSFILE — so no ambient
+    PG* variable, service file, or ~/.pgpass can alter what the probe
+    proves."""
+    quoted = "'" + sql.replace("'", "'\\''") + "'"
+    return ["bash", "-c",
+            'exec env -i PATH="$PATH" PGPASSFILE=/dev/null'
+            ' PGPASSWORD="$PGPASSWORD" psql'
+            f" 'postgresql://{opts.get('neon-role')}@127.0.0.1:{port}"
+            f"/{opts.get('neon-database')}?connect_timeout=10'"
+            f" -w -v ON_ERROR_STOP=1 -tAc {quoted}"]
 
 
 def tunnel_args(opts: dict, port: int) -> list[str]:

@@ -69,25 +69,32 @@ first_object() {
   rclone lsf "r2:$bucket/$prefix/$1/" --recursive --files-only 2>/dev/null | head -1
 }
 
+# Pageserver evidence is existence: the initdb/layer upload at bootstrap is
+# what proved the write path, and layer uploads after that follow the
+# checkpoint cadence, so demanding a new one every converge would flake.
 pages=$(first_object pageserver)
 if [ -z "$pages" ]; then
   echo "neon-smoke: no pageserver objects under $prefix/pageserver/ in R2" >&2
   exit 1
 fi
 
-# The safekeeper offloads closed segments only, so close one: pg_switch_wal
-# needs more than the application role, which is exactly what cloud_admin's
-# generated password is for.
+# Safekeeper evidence must be FRESH: this run upserted a row, so switching
+# the WAL closes a non-empty segment and a new object must appear beyond
+# the pre-switch baseline. Historical objects passing this gate would let a
+# broken uploader hide indefinitely.
+baseline=$(mktemp)
+rclone lsf "r2:$bucket/$prefix/safekeeper/" --recursive --files-only 2>/dev/null | sort > "$baseline"
 run_psql "$admin_pw" "postgresql://cloud_admin@127.0.0.1:55433/postgres?connect_timeout=10" \
   -tAc "SELECT pg_switch_wal();" >/dev/null
 wal=""
 for _ in $(seq 1 24); do
-  wal=$(first_object safekeeper)
+  wal=$(rclone lsf "r2:$bucket/$prefix/safekeeper/" --recursive --files-only 2>/dev/null | sort | comm -13 "$baseline" - | head -1)
   [ -n "$wal" ] && break
   sleep 5
 done
+rm -f "$baseline"
 if [ -z "$wal" ]; then
-  echo "neon-smoke: no safekeeper WAL segments under $prefix/safekeeper/ in R2 after pg_switch_wal" >&2
+  echo "neon-smoke: no NEW safekeeper WAL segment under $prefix/safekeeper/ after pg_switch_wal" >&2
   exit 1
 fi
 

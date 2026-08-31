@@ -247,13 +247,16 @@ async function runQuiet(args: string[], env: Record<string, string>, timeoutMs: 
 }
 
 // A psql invocation with an explicit everything: host, port, role, database,
-// and `-w` so a missing password fails instead of prompting. The environment
-// is what runQuiet passes, so no ambient PG* variable or ~/.pgpass can leak
-// into the probe.
+// and `-w` so a missing password fails instead of prompting. `env -i` clears
+// the environment and re-admits only PATH, the password handed over through
+// the runner, and a dead PGPASSFILE — so no ambient PG* variable, service
+// file, or ~/.pgpass can alter what the probe proves.
 export function psqlArgs(opts: Opts, port: number, sql: string): string[] {
-  return ["psql",
-    `postgresql://${opts["neon-role"]}@127.0.0.1:${port}/${opts["neon-database"]}?connect_timeout=10`,
-    "-w", "-v", "ON_ERROR_STOP=1", "-tAc", sql];
+  const quoted = `'${sql.replaceAll("'", `'\\''`)}'`;
+  return ["bash", "-c",
+    'exec env -i PATH="$PATH" PGPASSFILE=/dev/null PGPASSWORD="$PGPASSWORD" psql' +
+    ` 'postgresql://${opts["neon-role"]}@127.0.0.1:${port}/${opts["neon-database"]}?connect_timeout=10'` +
+    ` -w -v ON_ERROR_STOP=1 -tAc ${quoted}`];
 }
 
 // An ssh tunnel through the generated `~/.ssh/config` alias — the supported
