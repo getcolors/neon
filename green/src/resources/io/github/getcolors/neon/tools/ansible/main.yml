@@ -1,0 +1,239 @@
+---
+# Convergence for the Neon stack.
+#
+# The ordering is not stylistic. The storage tier must be up before the
+# tenant and timeline can be reconciled, and the compute node's spec cannot
+# be rendered before the role verifiers exist — so secrets, then storage,
+# then bootstrap, then compute, and a smoke that asks the system what it has
+# rather than trusting exit codes. Every generated secret is create-once
+# (`creates:`): regenerating a verifier would lock the operator out of a
+# database that still works, and regenerating the R2 generation counter
+# would break the next re-attach.
+- name: Install the Neon serverless Postgres stack
+  hosts: neon
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.wait_for_connection: {connect_timeout: 10, delay: 5, sleep: 5, timeout: 600}
+    - ansible.builtin.setup:
+  tasks:
+    - name: Install Docker and tooling
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, ca-certificates, curl, jq, openssl,
+               python3, postgresql-client, awscli]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - ansible.builtin.systemd_service: {name: docker, enabled: true, state: started}
+    - ansible.builtin.file: {path: /opt/neon, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /etc/neon, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /etc/neon/secrets, state: directory, mode: "0700"}
+    # The pageserver runs as uid 1000 (`neon` in the image) and must own its
+    # bind-mounted data directory or it cannot create tenants/.
+    - ansible.builtin.file:
+        path: /opt/neon/pageserver
+        state: directory
+        mode: "0750"
+        owner: "1000"
+        group: "1000"
+
+    # The one operator secret pair on this host: the R2 keys the pageserver
+    # and safekeeper write remote storage with. They arrive as Ansible env
+    # lookups resolved at execution time, so the rendered playbook in
+    # .colors/ carries the expression and never the value.
+    - name: Install the R2 credentials
+      ansible.builtin.copy:
+        dest: /etc/neon/r2.env
+        mode: "0600"
+        content: |
+          AWS_ACCESS_KEY_ID={{ lookup('env','COLORS_PAR_NEON_R2_ACCESS_KEY_ID') }}
+          AWS_SECRET_ACCESS_KEY={{ lookup('env','COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY') }}
+      no_log: true
+      notify: Restart the storage tier
+
+    - name: Install the verifier generator
+      ansible.builtin.copy: {src: scramgen.py, dest: /opt/neon/scramgen.py, mode: "0755"}
+
+    # The database credentials are born on this host and never leave it: a
+    # plaintext for the operator to read over SSH, and the SCRAM verifier the
+    # compute spec carries. Generated together, once — the verifier file is
+    # what makes the rendered spec deterministic across converges.
+    - name: Generate the application role credential once, on this host only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        pw="$(openssl rand -hex 24)"
+        printf '%s\n' "$pw" > /etc/neon/secrets/neon_role_password
+        printf '%s\n' "$pw" | python3 /opt/neon/scramgen.py > /etc/neon/secrets/neon_role_verifier
+      args: {creates: /etc/neon/secrets/neon_role_verifier, executable: /bin/bash}
+
+    - name: Generate the cloud_admin credential once, on this host only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        pw="$(openssl rand -hex 24)"
+        printf '%s\n' "$pw" > /etc/neon/secrets/cloud_admin_password
+        printf '%s\n' "$pw" | python3 /opt/neon/scramgen.py > /etc/neon/secrets/cloud_admin_verifier
+      args: {creates: /etc/neon/secrets/cloud_admin_verifier, executable: /bin/bash}
+
+    # The keypair behind compute_ctl's external HTTP API (loopback-only here).
+    # Upstream's compose ships a committed keypair; this deployment mints its
+    # own so no third party holds a signing key for this host.
+    - name: Generate the compute JWKS keypair once, on this host only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        openssl genpkey -algorithm ed25519 -out /etc/neon/secrets/jwks_ed25519.pem
+        openssl pkey -in /etc/neon/secrets/jwks_ed25519.pem -pubout -outform DER \
+          | tail -c 32 | basenc --base64url | tr -d '=' > /etc/neon/secrets/jwks_x
+        sha256sum /etc/neon/secrets/jwks_x | cut -c1-32 > /etc/neon/secrets/jwks_kid
+      args: {creates: /etc/neon/secrets/jwks_x, executable: /bin/bash}
+
+    # An empty verifier in the spec would be a role with no working login and
+    # no error to say so. Refuse to converge instead.
+    - name: Refuse to converge with empty credentials
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for f in neon_role_password neon_role_verifier cloud_admin_password \
+                 cloud_admin_verifier jwks_x jwks_kid; do
+          [ -s "/etc/neon/secrets/$f" ] || { echo "empty /etc/neon/secrets/$f" >&2; exit 1; }
+        done
+        grep -q '^AWS_ACCESS_KEY_ID=..*' /etc/neon/r2.env || { echo "empty R2 key id" >&2; exit 1; }
+        grep -q '^AWS_SECRET_ACCESS_KEY=..*' /etc/neon/r2.env || { echo "empty R2 secret" >&2; exit 1; }
+      args: {executable: /bin/bash}
+      changed_when: false
+
+    - name: Install stack configuration
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode | default('0644') }}"
+      loop:
+        - {src: compose.yml, dest: /opt/neon/compose.yml}
+        - {src: config.json, dest: /opt/neon/config.json.tpl}
+        - {src: bootstrap.sh, dest: /usr/local/sbin/neon-bootstrap, mode: "0755"}
+        - {src: smoke.sh, dest: /usr/local/sbin/neon-smoke, mode: "0755"}
+        - {src: status.sh, dest: /usr/local/sbin/neon-status, mode: "0755"}
+        - {src: rotate.sh, dest: /usr/local/sbin/neon-rotate, mode: "0755"}
+      notify: Converge the stack
+
+    - name: Install pageserver configuration
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+      loop:
+        - {src: pageserver.toml, dest: /opt/neon/pageserver/pageserver.toml}
+        - {src: identity.toml, dest: /opt/neon/pageserver/identity.toml}
+      notify: Restart the storage tier
+
+    # The spec the compute node boots from: the rendered template plus this
+    # host's stored verifiers and JWKS values. Deterministic — the verifiers
+    # are create-once files — so this only changes when desired state or a
+    # deliberate rotation changed something, and only then is the compute
+    # container recreated. Recreated, never restarted: that is also what
+    # rotation does, and the tmpfs on /tmp is what makes plain restarts
+    # survivable at all.
+    - name: Render the compute spec
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        next=$(mktemp /etc/neon/config.json.next.XXXXXX)
+        jq --arg admin "$(cat /etc/neon/secrets/cloud_admin_verifier)" \
+           --arg role "$(cat /etc/neon/secrets/neon_role_verifier)" \
+           --arg kid "$(cat /etc/neon/secrets/jwks_kid)" \
+           --arg x "$(cat /etc/neon/secrets/jwks_x)" \
+           '(.spec.cluster.roles[] | select(.name == "cloud_admin") | .encrypted_password) = $admin
+            | (.spec.cluster.roles[] | select(.encrypted_password == "@NEON_ROLE_VERIFIER@") | .encrypted_password) = $role
+            | .compute_ctl_config.jwks.keys[0].kid = $kid
+            | .compute_ctl_config.jwks.keys[0].x = $x' \
+           /opt/neon/config.json.tpl > "$next"
+        chmod 0600 "$next"
+        if cmp -s "$next" /etc/neon/config.json 2>/dev/null; then
+          rm -f "$next"
+          echo unchanged
+        else
+          mv "$next" /etc/neon/config.json
+          echo CHANGED
+        fi
+      args: {executable: /bin/bash}
+      register: spec_render
+      changed_when: "'CHANGED' in spec_render.stdout"
+      notify: Recreate the compute node
+
+    # The storage tier first: the tenant and timeline can only be reconciled
+    # against a running pageserver, and compute would crash-loop against a
+    # pageserver that has never heard of its tenant.
+    - name: Converge the storage tier
+      ansible.builtin.command: docker compose up -d --remove-orphans storage_broker pageserver safekeeper
+      args: {chdir: /opt/neon}
+      register: compose_storage
+      changed_when: "'Created' in (compose_storage.stdout + compose_storage.stderr) or 'Recreated' in (compose_storage.stdout + compose_storage.stderr) or 'Started' in (compose_storage.stdout + compose_storage.stderr)"
+
+    - name: Wait for the pageserver
+      ansible.builtin.uri: {url: "http://127.0.0.1:9898/v1/status", status_code: [200]}
+      register: ps_health
+      retries: 30
+      delay: 5
+      until: ps_health is succeeded
+
+    - name: Wait for the safekeeper
+      ansible.builtin.uri: {url: "http://127.0.0.1:7676/v1/status", status_code: [200]}
+      register: sk_health
+      retries: 30
+      delay: 5
+      until: sk_health is succeeded
+
+    # Reconcile the R2 prefix ownership, the tenant, and the timeline —
+    # read-before-write, conflict-tolerant, generation-aware. The script
+    # refuses foreign or unaccounted-for prefixes rather than attaching them.
+    - name: Reconcile tenant and timeline
+      ansible.builtin.command: /usr/local/sbin/neon-bootstrap
+      register: bootstrap
+      changed_when: "'CHANGED' in bootstrap.stdout"
+
+    - name: Converge the compute node
+      ansible.builtin.command: docker compose up -d compute
+      args: {chdir: /opt/neon}
+      register: compose_compute
+      changed_when: "'Created' in (compose_compute.stdout + compose_compute.stderr) or 'Recreated' in (compose_compute.stdout + compose_compute.stderr) or 'Started' in (compose_compute.stdout + compose_compute.stderr)"
+
+    - ansible.builtin.meta: flush_handlers
+
+    - name: Wait for Postgres to accept connections
+      ansible.builtin.command: pg_isready -h 127.0.0.1 -p 55433 -U cloud_admin
+      register: pg_ready
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: pg_ready.rc == 0
+
+    # The server-side gates: the SQL round-trip, the auth negatives, the R2
+    # object evidence, and — only after all of it holds — the ready marker
+    # that completes the ownership handshake.
+    - name: Prove the deployment works end to end
+      ansible.builtin.command: /usr/local/sbin/neon-smoke
+      register: smoke
+      changed_when: "'CHANGED' in smoke.stdout"
+      retries: 3
+      delay: 20
+      until: smoke.rc == 0
+
+  handlers:
+    - name: Converge the stack
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args: {chdir: /opt/neon}
+
+    - name: Restart the storage tier
+      ansible.builtin.command: docker compose restart storage_broker pageserver safekeeper
+      args: {chdir: /opt/neon}
+
+    # The compute node is recreate-only: a plain restart inherits the
+    # container's writable layer, and historically a stale postgres lock
+    # there has crash-looped every subsequent boot. The spec is also applied
+    # at startup, so recreate is what makes a spec change take effect.
+    - name: Recreate the compute node
+      ansible.builtin.command: docker compose up -d --force-recreate compute
+      args: {chdir: /opt/neon}

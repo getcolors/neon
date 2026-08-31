@@ -1,0 +1,38 @@
+# Golden fixture: opt-out mode. An explicit `vultr-ssh-keys` means the package
+# touches no key material at all and renders the historical shape.
+profile: neon-optout
+workdir: WORKDIR
+
+provider-compute: vultr
+provider-backend: local
+
+compute-prevent-destroy: true
+
+neon-image: ghcr.io/neondatabase/neon:release-9129@sha256:166022a72bf9983eba96d061d794f4740edbd4c3301e66202c1180acce9a323c
+neon-compute-image: ghcr.io/neondatabase/compute-node-v17:release-compute-9073@sha256:ed6a613231d7026b4df8b00563444b9f33745370a3b3f0a2183e723f460ba974
+neon-pg-version: 17
+
+neon-tenant-id: "0123456789abcdef0123456789abcdef"
+neon-timeline-id: "fedcba9876543210fedcba9876543210"
+
+neon-database: neondb
+neon-role: neon
+
+neon-r2-bucket: neon-storage-example
+neon-r2-endpoint: https://example.eu.r2.cloudflarestorage.com
+neon-r2-region: auto
+
+vultr-region: ams
+vultr-plan: vc2-4c-8gb
+vultr-os-id: 2284
+
+# Opt-out mode: an existing account key id, supplied by the operator. The
+# package neither generates nor removes key material in this mode.
+vultr-ssh-keys: "00000000-0000-0000-0000-000000000000"
+
+vultr-ssh-sources:
+  - 0.0.0.0/0
+  - "::/0"
+
+r2-bucket: tofu-state-example
+r2-endpoint: https://example.eu.r2.cloudflarestorage.com

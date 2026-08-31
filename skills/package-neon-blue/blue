@@ -1,0 +1,60 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+#
+# Managed by `bb pin` — do not edit by hand, and never invent a SHA.
+#
+# UNPINNED: this payload has not been stamped yet. `bb pin` collapses this
+# paragraph and adds the git sources for package-neon-blue and blue once
+# the neon repository has been pushed. Point the launcher at a working tree
+# meanwhile: NEON_LIB_ROOT=/path/to/neon
+"""Thin launcher for package-neon-blue.
+
+This file is both the skill payload and the repository entry point —
+blue/blue in the repository is a symlink to it. It deliberately holds no
+logic of its own: validation, the graph and the steps all live in the
+package-neon-blue library, where the test suite reaches them. A copied
+payload is the one place in this project where code cannot be tested, so
+nothing that can live elsewhere should live here.
+"""
+
+import os
+import subprocess
+import sys
+
+UNPINNED_ERROR = """\
+this launcher carries no neon pin.
+It has not been stamped by `bb pin`, which cannot run until the neon
+repository has been pushed.
+Point it at a checkout meanwhile: NEON_LIB_ROOT=/path/to/neon
+(or run through the repository project: cd neon/blue && uv run python -m package_neon_blue ...)
+"""
+
+
+def _lib_root_project(root: str) -> str:
+    """The uv project inside a NEON_LIB_ROOT checkout: the repository
+    root or its blue/ implementation both work."""
+    if os.path.isfile(os.path.join(root, "pyproject.toml")):
+        return root
+    return os.path.join(root, "blue")
+
+
+def main() -> None:
+    root = os.environ.get("NEON_LIB_ROOT")
+    if root:
+        result = subprocess.run(
+            ["uv", "run", "--project", _lib_root_project(root),
+             "python", "-m", "package_neon_blue", *sys.argv[1:]])
+        raise SystemExit(result.returncode)
+    try:
+        from package_neon_blue import exec  # resolvable only once pinned
+    except ImportError:
+        sys.stderr.write(UNPINNED_ERROR)
+        raise SystemExit(2)
+    exec()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,15 @@
+---
+# Stop the stack before infrastructure deletion. The R2 data — layers, WAL,
+# markers, the generation counter — is deliberately left in place: it is the
+# durable half of the database, and the documented recovery path re-attaches
+# it from a fresh host. Removing it is a separate, manual decision.
+- name: Stop Neon services before infrastructure deletion
+  hosts: neon
+  become: true
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: docker compose down
+      args: {chdir: /opt/neon}
+      register: compose_down
+      changed_when: "'Removed' in (compose_down.stderr + compose_down.stdout)"
+      failed_when: false

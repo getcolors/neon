@@ -1,0 +1,88 @@
+# Example desired state for a neon deployment. Non-secret values only.
+# Credentials belong in the gitignored .envrc.private as COLORS_PAR_* variables.
+# Never export COLORS_PAR_PROFILE: it selects a deployment's remote state.
+#
+# Required credentials:
+#   Vultr           COLORS_PAR_VULTR_API_KEY
+#   state in R2     COLORS_PAR_R2_ACCESS_KEY_ID
+#                   COLORS_PAR_R2_SECRET_ACCESS_KEY
+#   Neon data in R2 COLORS_PAR_NEON_R2_ACCESS_KEY_ID
+#                   COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY
+#
+# There is no DNS provider and no public database port: every Neon service
+# binds to loopback on the host, the firewall opens 22 only, and the client
+# path is an SSH tunnel (ssh -L 55433:127.0.0.1:55433 <profile>). The
+# database role passwords are generated on the server during convergence and
+# are not operator-supplied credentials.
+
+profile: neon-example
+workdir: .colors
+
+provider-compute: vultr
+provider-backend: r2
+
+# Preserve this guard in committed desired state. Destruction requires an
+# explicitly authorized one-run override; never edit this flag to bypass it.
+compute-prevent-destroy: true
+
+# --- Neon -------------------------------------------------------------------
+
+# Upstream cut its last versioned releases in July 2025 and then moved to
+# untagged continuous deployment, so these are the final deliberate release
+# tags of each train — storage (pageserver, safekeeper, storage_broker) and
+# compute version independently. Pinned by digest because upstream also
+# publishes floating tags; move the pair together only to another verified
+# release pairing.
+neon-image: ghcr.io/neondatabase/neon:release-9129@sha256:166022a72bf9983eba96d061d794f4740edbd4c3301e66202c1180acce9a323c
+neon-compute-image: ghcr.io/neondatabase/compute-node-v17:release-compute-9073@sha256:ed6a613231d7026b4df8b00563444b9f33745370a3b3f0a2183e723f460ba974
+neon-pg-version: 17
+
+# Tenant and timeline identities are desired state, not runtime accidents:
+# fixing them here is what makes convergence reconcilable (create-if-absent,
+# verify-if-present) and makes recovery describable — the R2 prefix plus
+# these ids name the database. Non-secret 32-hex identifiers; generate fresh
+# ones per deployment with `openssl rand -hex 16`.
+neon-tenant-id: "00000000000000000000000000000000"
+neon-timeline-id: "11111111111111111111111111111111"
+
+# The application database and role convergence creates on the compute node.
+neon-database: neondb
+neon-role: neon
+
+# --- Neon data in R2 ----------------------------------------------------------
+
+# Pageserver layers and safekeeper WAL backups, under `<profile>/data/`.
+# Convergence adopts the prefix only through its two-phase ownership markers
+# (.colors-init, .colors-ready); a foreign or half-initialized prefix fails
+# the converge instead of being attached. Never configure R2 lifecycle rules
+# on this bucket: they would delete live layers and WAL.
+neon-r2-bucket: neon-storage
+neon-r2-endpoint: https://ACCOUNT.eu.r2.cloudflarestorage.com
+neon-r2-region: auto
+
+# --- Vultr ------------------------------------------------------------------
+
+# No vultr-name: per workspace standards/compute-name.md the machine and its
+# firewall are named after the profile.
+vultr-region: ams
+# Pageserver, safekeeper, storage broker and the Postgres compute are
+# colocated; 4 GiB invites bootstrap OOM, so 4 vCPU / 8 GiB is the floor.
+vultr-plan: vc2-4c-8gb
+# Vultr operating systems are numeric ids; 2284 is Ubuntu 24.04 LTS x64.
+vultr-os-id: 2284
+
+# No vultr-ssh-keys: keygen mode per workspace standards/ssh-keypair.md. The
+# package generates and owns ~/.ssh/<profile> and registers the account key
+# resource named after the profile. Setting vultr-ssh-keys here would switch
+# the deployment to opt-out mode.
+
+# SSH is the only open port: convergence, recovery, and the supported client
+# path (the tunnel) all ride it. No HTTP, no public 5432.
+vultr-ssh-sources:
+  - 0.0.0.0/0
+  - "::/0"
+
+# --- R2 state backend -------------------------------------------------------
+
+r2-bucket: tofu-state-ACCOUNT-eu
+r2-endpoint: https://ACCOUNT.eu.r2.cloudflarestorage.com

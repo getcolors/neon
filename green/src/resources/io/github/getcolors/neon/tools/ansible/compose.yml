@@ -1,0 +1,127 @@
+# Neon: storage/compute-separated Postgres on one host — the storage broker,
+# the pageserver, one safekeeper, and a compute node running Postgres
+# <{ neon-pg-version }> under compute_ctl.
+#
+# Upstream's own docker-compose is a development fixture (MinIO, three
+# colocated safekeepers, trust auth, floating tags), so this package owns its
+# templates instead of running that file; they are derived from the
+# `release-9129` tree and move only when the image pins move. The cost is
+# deliberate: when upstream changes the compose shape, nothing here follows
+# automatically — re-read `docker-compose/` at the pinned tag when bumping
+# `neon-image` or `neon-compute-image`.
+#
+# Nothing publishes beyond loopback. The firewall opens 22 only, and the
+# supported client path is an SSH tunnel to 127.0.0.1:55433. Remote storage
+# is Cloudflare R2: the pageserver uploads layers and the safekeeper offloads
+# closed WAL segments under this deployment's own prefix, credentialled by
+# /etc/neon/r2.env — the one operator secret pair on this host.
+#
+# Three safekeepers on one host would be redundancy theater: commit
+# acknowledgement needs this disk either way, and the durable copy is the R2
+# WAL backup. The honest single-node RPO is the tail of acknowledged WAL
+# since the last offloaded segment; see the README.
+name: neon
+services:
+  storage_broker:
+    image: <{ neon-image }>
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:50051:50051"
+    command:
+      - "storage_broker"
+      - "--listen-addr=0.0.0.0:50051"
+
+  pageserver:
+    image: <{ neon-image }>
+    restart: unless-stopped
+    # The R2 pair, and nothing else: written by the playbook from the
+    # operator's environment, never rendered into this file.
+    env_file: [/etc/neon/r2.env]
+    ports:
+      - "127.0.0.1:9898:9898"
+      - "127.0.0.1:6400:6400"
+    volumes:
+      # A bind mount rather than a named volume, on purpose: the directory
+      # holds pageserver.toml and identity.toml (Ansible-managed), and the
+      # documented recovery procedure wipes its tenants/ subtree while
+      # leaving the configuration in place. Owned by uid 1000 (`neon` in the
+      # image); the playbook chowns it before first start.
+      - /opt/neon/pageserver:/data/.neon/
+    depends_on:
+      - storage_broker
+
+  safekeeper:
+    image: <{ neon-image }>
+    restart: unless-stopped
+    environment:
+      - SAFEKEEPER_ADVERTISE_URL=safekeeper:5454
+      - SAFEKEEPER_ID=1
+      - BROKER_ENDPOINT=http://storage_broker:50051
+    env_file: [/etc/neon/r2.env]
+    ports:
+      - "127.0.0.1:7676:7676"
+    volumes:
+      - safekeeper-data:/data
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+    command:
+      - "safekeeper --listen-pg=$$SAFEKEEPER_ADVERTISE_URL
+                    --listen-http='0.0.0.0:7676'
+                    --id=$$SAFEKEEPER_ID
+                    --broker-endpoint=$$BROKER_ENDPOINT
+                    -D /data
+                    --remote-storage=\"{endpoint='<{ neon-r2-endpoint }>',
+                                        bucket_name='<{ neon-r2-bucket }>',
+                                        bucket_region='<{ neon-r2-region }>',
+                                        prefix_in_bucket='/<{ neon-r2-prefix }>/safekeeper/'}\""
+    depends_on:
+      - storage_broker
+
+  compute:
+    image: <{ neon-compute-image }>
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:55433:55433"
+      - "127.0.0.1:3080:3080"
+    volumes:
+      # The rendered spec, with the generated role verifiers injected on this
+      # host. There is deliberately NO volume on the pgdata path: compute
+      # local state is a disposable projection of the pageserver + safekeeper,
+      # and compute_ctl insists on creating pgdata itself — a root-owned
+      # mountpoint there fails the boot with `File exists (os error 17)`.
+      - /etc/neon/config.json:/var/db/postgres/configs/config.json:ro
+    # Postgres writes its socket and lock under /tmp. A container restart
+    # keeps the writable layer, and the stale /tmp/.s.PGSQL.55433.lock then
+    # kills every subsequent boot — tmpfs makes restart safe.
+    tmpfs:
+      - /tmp
+    environment:
+      # compute_ctl exports traces to localhost:4318 by default; nothing
+      # listens there, and the export errors are pure log noise.
+      - OTEL_SDK_DISABLED=true
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "55433", "-U", "cloud_admin"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    entrypoint:
+      - "/usr/local/bin/compute_ctl"
+    command:
+      - "--pgdata"
+      - "/var/db/postgres/compute"
+      - "-C"
+      - "postgresql://cloud_admin@localhost:55433/postgres"
+      - "-b"
+      - "/usr/local/bin/postgres"
+      - "--compute-id"
+      - "compute-<{ profile }>"
+      - "--config"
+      - "/var/db/postgres/configs/config.json"
+    depends_on:
+      - safekeeper
+      - pageserver
+
+volumes:
+  safekeeper-data:

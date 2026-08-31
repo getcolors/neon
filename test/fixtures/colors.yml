@@ -1,0 +1,36 @@
+# Golden fixture: keygen mode, where the package owns the machine keypair.
+# `vultr-ssh-keys` is absent on purpose — its absence is what selects keygen
+# mode under the SSH Keypair Standard. `vultr-name` is likewise absent: the
+# Compute Name Standard names the machine after the profile.
+profile: neon-fixture
+workdir: WORKDIR
+
+provider-compute: vultr
+provider-backend: local
+
+compute-prevent-destroy: true
+
+neon-image: ghcr.io/neondatabase/neon:release-9129@sha256:166022a72bf9983eba96d061d794f4740edbd4c3301e66202c1180acce9a323c
+neon-compute-image: ghcr.io/neondatabase/compute-node-v17:release-compute-9073@sha256:ed6a613231d7026b4df8b00563444b9f33745370a3b3f0a2183e723f460ba974
+neon-pg-version: 17
+
+neon-tenant-id: "0123456789abcdef0123456789abcdef"
+neon-timeline-id: "fedcba9876543210fedcba9876543210"
+
+neon-database: neondb
+neon-role: neon
+
+neon-r2-bucket: neon-storage-example
+neon-r2-endpoint: https://example.eu.r2.cloudflarestorage.com
+neon-r2-region: auto
+
+vultr-region: ams
+vultr-plan: vc2-4c-8gb
+vultr-os-id: 2284
+
+vultr-ssh-sources:
+  - 0.0.0.0/0
+  - "::/0"
+
+r2-bucket: tofu-state-example
+r2-endpoint: https://example.eu.r2.cloudflarestorage.com

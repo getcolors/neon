@@ -1,0 +1,7 @@
+broker_endpoint='http://storage_broker:50051'
+pg_distrib_dir='/usr/local/'
+listen_pg_addr='0.0.0.0:6400'
+listen_http_addr='0.0.0.0:9898'
+remote_storage={ endpoint='https://example.eu.r2.cloudflarestorage.com', bucket_name='neon-storage-example', bucket_region='auto', prefix_in_bucket='/neon-optout/data/pageserver' }
+control_plane_api='http://0.0.0.0:6666' # No storage controller on this host; a junk address, per upstream's compose
+control_plane_emergency_mode=true

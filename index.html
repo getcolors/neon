@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Provision self-hosted Neon — serverless Postgres with storage/compute separation, its layers and WAL in Cloudflare R2 — on one loopback-only Vultr instance reached over an SSH tunnel.">
+  <title>Neon Package Skill — getcolors</title>
+  <style>
+    :root{color-scheme:light;--ink:#1f2328;--muted:#59636e;--line:#d0d7de;--soft:#f6f8fa;--blue:#0969da;--green:#1a7f37;--warn:#9a6700}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:920px;margin:auto;padding:64px 28px 100px}h1{font-size:52px;line-height:1.05;margin:0}h2{margin-top:54px;padding-bottom:8px;border-bottom:1px solid var(--line)}h3{margin-top:30px}.lead{font-size:20px;color:var(--muted);max-width:790px}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}pre{padding:18px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--soft)}:not(pre)>code{padding:.12em .35em;border-radius:5px;background:var(--soft)}a{color:var(--blue)}.eyebrow{color:var(--green);font-weight:700;letter-spacing:.08em}.callout{padding:16px 18px;border-left:4px solid var(--green);background:#dafbe1}.warning{border-color:var(--warn);background:#fff8c5}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px;border:1px solid var(--line);border-radius:8px}.card h3{margin-top:0}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{padding:8px 10px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--soft)}@media(max-width:650px){main{padding-top:38px}.grid{grid-template-columns:1fr}h1{font-size:40px}}
+  </style>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-4VKP1WY4QJ"></script>
+  <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-4VKP1WY4QJ',{page_title:'Neon Package Skill — getcolors'});</script>
+<script src="https://rybbit.getcolors.ai/api/script.js" data-site-id="9fb9c41a6d49" defer></script>
+</head>
+<body><main>
+  <p class="eyebrow">GREEN · RED · BLUE PACKAGE SKILL · VULTR · NEON</p>
+  <h1>Neon Package Skill</h1>
+  <p class="lead">A reproducible Green, Red, and Blue workflow for self-hosted Neon — serverless Postgres with storage and compute separated, its layers and WAL durably in Cloudflare R2 — on one guarded, loopback-only Vultr instance.</p>
+
+  <div class="callout"><strong>The R2 prefix is the database.</strong> The pageserver uploads layers and the safekeeper offloads WAL to <code>&lt;profile&gt;/data/</code> in R2, and the tenant and timeline identities live in <code>colors.yml</code> — so a rebuilt host re-attaches the same identities and rehydrates from R2. Two-phase ownership markers make sure convergence never attaches a foreign or half-initialized prefix.</div>
+
+  <h2>Quick start</h2>
+  <pre><code>npx skills add getcolors/neon
+cp .agents/skills/package-neon-green/green ./green
+chmod +x green
+./green build
+./green create --dry-run</code></pre>
+<p>Equivalent Red and Blue skills ship <code>red</code> and <code>blue</code> launchers.</p>
+  <p>Build renders reproducible output and dry-run walks the workflow without provider side effects. Real creation and deletion require explicit authorization.</p>
+
+  <h2>Architecture</h2>
+  <div class="grid">
+    <div class="card"><h3>Compute</h3><p>One Vultr instance and a firewall opening 22 — the only open port. In keygen mode the account SSH key resource is named after the profile and lives in this deployment's state.</p></div>
+    <div class="card"><h3>Storage tier</h3><p>Docker Compose: the storage broker, the pageserver, and one safekeeper, every image pinned by tag <em>and</em> digest, all bound to loopback, all writing to R2 under the deployment's own prefix.</p></div>
+    <div class="card"><h3>Compute node</h3><p>Postgres under <code>compute_ctl</code>, its roles provisioned from a spec whose SCRAM verifiers are generated on the host — recreate-only by doctrine, disposable by design.</p></div>
+    <div class="card"><h3>Acceptance</h3><p>Server-side: the SQL round-trip, three auth refusals, and R2 object evidence. Workstation-side: the SSH tunnel through the generated alias, with and without the password.</p></div>
+  </div>
+
+  <h2>Connecting</h2>
+  <p>There is no DNS record and no public database port — the supported client path is the tunnel:</p>
+  <pre><code>ssh -L 55433:127.0.0.1:55433 &lt;profile&gt;
+psql 'postgresql://neon@127.0.0.1:55433/neondb'</code></pre>
+  <p>The role's password is generated on the server (<code>ssh &lt;profile&gt; cat /etc/neon/secrets/neon_role_password</code>); <code>neon-status</code> summarizes the deployment and <code>neon-rotate</code> rotates the password atomically, with rollback.</p>
+
+  <h2>The machine keypair</h2>
+  <p>The deployment owns its SSH key, following the workspace SSH Keypair Standard. Leave <code>vultr-ssh-keys</code> out of <code>colors.yml</code> and the first real <code>create</code> generates <code>~/.ssh/&lt;profile&gt;</code>, registers it at Vultr under the profile name, and a successful <code>delete</code> removes it last — never before.</p>
+
+  <div class="callout warning"><strong>The key lives outside the checkout.</strong> Cloning a deployment repository does not carry machine access with it; copy <code>~/.ssh/&lt;profile&gt;</code> deliberately. A key with no state is never overwritten, and a Vultr key named after the profile that this deployment's state does not own stops the run — if its fingerprint is not yours, do not delete it.</div>
+
+  <p>Supplying <code>vultr-ssh-keys</code> opts out entirely: the package then generates, validates and deletes no key material. Rotation is a rebuild, because Vultr key lists are ForceNew.</p>
+
+  <h2>The SSH config block</h2>
+  <p>Convergence also writes one <code>~/.ssh/config</code> block, following the workspace SSH Config Standard, so <code>ssh &lt;profile&gt;</code> reaches the host with no address, user or <code>-i</code> flag — and the acceptance step rides exactly that alias, so the block is proven, not assumed. Delete removes the block before destroying the instance, the reverse of the keypair: a block that outlives its host is stale but harmless, while a key removed early locks you out of a machine that still exists.</p>
+
+  <h2>Exposure</h2>
+  <table>
+    <tr><th>Port</th><th>Exposure</th><th>Purpose</th></tr>
+    <tr><td>22</td><td><code>vultr-ssh-sources</code></td><td>Key-only SSH: convergence, recovery, and the client tunnel</td></tr>
+    <tr><td>55433 / 3080</td><td>loopback</td><td>Postgres and the compute API, reached through the tunnel</td></tr>
+    <tr><td>9898 / 6400</td><td>loopback</td><td>Pageserver HTTP and page service</td></tr>
+    <tr><td>7676 / 5454 / 50051</td><td>loopback</td><td>Safekeeper and the storage broker</td></tr>
+  </table>
+
+  <h2>Durability, honestly</h2>
+  <p>Layers and WAL survive the host in R2, but commit acknowledgement requires the host's disk and WAL offload is asynchronous: losing the host can lose the tail of acknowledged WAL since the last offloaded segment. That is the single-node RPO — this is a demo-tier deployment and says so. Never configure R2 lifecycle rules on the bucket; they would delete live layers and WAL.</p>
+
+  <h2>Safety</h2>
+  <ul>
+    <li>Credentials are <code>COLORS_PAR_*</code> variables in the gitignored <code>.envrc.private</code> — never in <code>colors.yml</code>.</li>
+    <li>Never export <code>COLORS_PAR_PROFILE</code>; the profile keys remote state.</li>
+    <li><code>.colors/</code> is generated output: never edit or commit it.</li>
+    <li><code>compute-prevent-destroy: true</code> guards deletion behind a one-run override — and delete leaves the R2 data in place.</li>
+  </ul>
+
+  <p><a href="https://github.com/getcolors/neon">Source on GitHub</a> · <a href="skills/package-neon-green/references/configuration.md">Configuration reference</a></p>
+</main></body>
+</html>
