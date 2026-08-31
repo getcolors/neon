@@ -81,8 +81,11 @@ The R2 prefix plus the tenant/timeline ids *are* the database. If the host is
 lost: `delete` (guarded) then `create` rebuilds a fresh host; the bootstrap
 finds the ready marker with this profile, re-attaches the tenant at the next
 generation, and the pageserver rebuilds its local state from R2 — bounded by
-the async-WAL RPO (the tail of acknowledged WAL since the last offloaded
-segment can be lost). Wiping only the pageserver's local `tenants/` directory
-and re-running `create` exercises the same path without a rebuild. The
+what the pageserver had uploaded (a fresh safekeeper cannot serve offloaded
+WAL back, so the RPO is the activity since the last checkpoint upload).
+Wiping only the pageserver's local `tenants/` directory and re-running
+`create` exercises the same path without a rebuild and loses nothing, since
+the surviving safekeeper replays its WAL (rehearsed, generation counter and
+all). The
 compute container is recreate-only — `docker compose up -d --force-recreate
 compute` — never restarted by hand.

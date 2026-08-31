@@ -157,7 +157,7 @@
   child is echoed; callers decide what becomes an error message, so a secret
   passed through `env` can never leak into output by default."
   [args env timeout-ms]
-  (process/run-with-timeout args env timeout-ms))
+  (process/run-with-timeout args (if (seq env) {:extra-env env} {}) timeout-ms))
 
 (defn psql-args
   "A psql invocation with an explicit everything: host, port, role, database,
@@ -173,11 +173,15 @@
   "An ssh tunnel through the generated `~/.ssh/config` alias — the supported
   client path, exercised end to end: the alias, the identity file, and the
   forward. `-f` returns once the forward is up; the remote `sleep` bounds its
-  lifetime so nothing needs killing on the way out."
+  lifetime so nothing needs killing on the way out. The bash wrapper exists
+  for the streams: the daemonized child inherits stdout/stderr, and a runner
+  that waits for the pipes to close would otherwise block until the sleep
+  expires — returning exactly when the tunnel dies."
   [opts port]
-  ["ssh" "-f" "-o" "ExitOnForwardFailure=yes" "-o" "BatchMode=yes"
-   "-L" (str port ":127.0.0.1:55433")
-   (ssh-config/host-alias opts) "sleep" "45"])
+  ["bash" "-c"
+   (str "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes"
+        " -L " port ":127.0.0.1:55433 "
+        (ssh-config/host-alias opts) " sleep 45 >/dev/null 2>&1")])
 
 (def smoke-sql
   "One deployment-scoped row, updated deterministically: the same statement on
@@ -226,7 +230,9 @@
                            :green/err (str "acceptance: the tunnelled smoke round-trip failed: "
                                            (str/trim (str (:err ok)))))
 
-                    (not= "1" (str/trim (str (:out ok))))
+                    ;; psql prints the INSERT command tag before the count;
+                    ;; the count is the last line.
+                    (not= "1" (last (str/split-lines (str/trim (str (:out ok))))))
                     (assoc opts :green/exit 1
                            :green/err (str "acceptance: colors_smoke should hold exactly one row, got "
                                            (str/trim (str (:out ok)))))

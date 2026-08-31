@@ -79,10 +79,12 @@ rotates the role password atomically, with rollback.
 
 The pageserver uploads layers and the safekeeper offloads closed WAL segments
 to R2 under `<profile>/data/`. Commit acknowledgement still requires the
-host's disk, and WAL offload is asynchronous — losing the host can lose the
-tail of acknowledged WAL since the last offloaded segment. That is the
-single-node RPO; this is a demo-tier deployment and says so. Never configure
-R2 lifecycle rules on the bucket: they would delete live layers and WAL.
+host's disk, uploads are asynchronous, and a fresh safekeeper cannot serve
+offloaded WAL back — so a full host loss recovers what the pageserver had
+uploaded: the single-node RPO is the activity since its last checkpoint
+upload. A wiped storage tier on a surviving host loses nothing (rehearsed).
+This is a demo-tier deployment and says so. Never configure R2 lifecycle
+rules on the bucket: they would delete live layers and WAL.
 
 ## Reference
 

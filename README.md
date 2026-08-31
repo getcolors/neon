@@ -83,11 +83,16 @@ refused, pageserver objects in R2, and a WAL segment offloaded after
 ## Durability, honestly
 
 The pageserver uploads layers and the safekeeper offloads closed WAL
-segments to R2 under `<profile>/data/`, so the data survives the host. But
-commit acknowledgement requires the host's disk, and WAL offload is
-asynchronous: losing the host can lose the tail of acknowledged WAL since
-the last offloaded segment. That is the single-node RPO. This is a demo-tier
-deployment and says so; it is not a substitute for a replicated cluster.
+segments to R2 under `<profile>/data/`, so the data survives the host — with
+an honest bound. Commit acknowledgement requires the host's disk, uploads
+are asynchronous, and a *fresh* safekeeper cannot serve the offloaded WAL
+back (verified in the recovery rehearsals): what a full host loss recovers
+is what the pageserver had uploaded, so the single-node RPO is the activity
+since the last pageserver checkpoint upload — minutes, not seconds. Losing
+only the storage tier's local state while the host survives loses nothing
+(rehearsed: a wiped pageserver re-attaches and replays the live safekeeper's
+WAL to the latest LSN). This is a demo-tier deployment and says so; it is
+not a substitute for a replicated cluster.
 
 Never configure R2 lifecycle rules on the bucket — they would delete live
 layers and WAL that Neon still references.

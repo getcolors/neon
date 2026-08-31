@@ -62,7 +62,7 @@ psql 'postgresql://neon@127.0.0.1:55433/neondb'</code></pre>
   </table>
 
   <h2>Durability, honestly</h2>
-  <p>Layers and WAL survive the host in R2, but commit acknowledgement requires the host's disk and WAL offload is asynchronous: losing the host can lose the tail of acknowledged WAL since the last offloaded segment. That is the single-node RPO — this is a demo-tier deployment and says so. Never configure R2 lifecycle rules on the bucket; they would delete live layers and WAL.</p>
+  <p>Layers and WAL survive the host in R2, with an honest bound: commit acknowledgement requires the host's disk, uploads are asynchronous, and a fresh safekeeper cannot serve offloaded WAL back — so a full host loss recovers what the pageserver had uploaded, and the single-node RPO is the activity since its last checkpoint upload. A wiped storage tier on a surviving host loses nothing; both cases were rehearsed against the live deployment. Never configure R2 lifecycle rules on the bucket; they would delete live layers and WAL.</p>
 
   <h2>Safety</h2>
   <ul>

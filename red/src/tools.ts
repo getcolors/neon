@@ -260,10 +260,15 @@ export function psqlArgs(opts: Opts, port: number, sql: string): string[] {
 // client path, exercised end to end: the alias, the identity file, and the
 // forward. `-f` returns once the forward is up; the remote `sleep` bounds its
 // lifetime so nothing needs killing on the way out.
+// The bash wrapper exists for the streams: the daemonized child inherits
+// stdout/stderr, and a runner that waits for the pipes to close would
+// otherwise block until the sleep expires — returning exactly when the
+// tunnel dies.
 export function tunnelArgs(opts: Opts, port: number): string[] {
-  return ["ssh", "-f", "-o", "ExitOnForwardFailure=yes", "-o", "BatchMode=yes",
-    "-L", `${port}:127.0.0.1:55433`,
-    sshConfig.hostAlias(opts), "sleep", "45"];
+  return ["bash", "-c",
+    "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes" +
+    ` -L ${port}:127.0.0.1:55433 ` +
+    `${sshConfig.hostAlias(opts)} sleep 45 >/dev/null 2>&1`];
 }
 
 // One deployment-scoped row, updated deterministically: the same statement on
@@ -310,7 +315,10 @@ export async function acceptanceStep(opts: Opts): Promise<Opts> {
         "red/err": "acceptance: the tunnelled smoke round-trip failed: " +
           String(ok.err ?? "").trim() };
     }
-    if (String(ok.out ?? "").trim() !== "1") {
+    // psql prints the INSERT command tag before the count; the count is the
+    // last line.
+    const rows = String(ok.out ?? "").trim().split("\n").at(-1);
+    if (rows !== "1") {
       return { ...opts, "red/exit": 1,
         "red/err": "acceptance: colors_smoke should hold exactly one row, got " +
           String(ok.out ?? "").trim() };

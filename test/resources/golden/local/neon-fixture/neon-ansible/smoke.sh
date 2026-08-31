@@ -52,15 +52,25 @@ if run_psql "$pw" "$url" -c "CREATE ROLE colors_smoke_escalation SUPERUSER" >/de
 fi
 
 # --- remote storage is real -------------------------------------------------
+# rclone, not awscli: Ubuntu 24.04 carries no awscli package. Configured
+# entirely from the environment — no config file to manage or leak.
 set -a; . /etc/neon/r2.env; set +a
-s3() { aws s3api "$@" --endpoint-url "$endpoint" --region "auto"; }
-list_count() {
-  s3 list-objects-v2 --bucket "$bucket" --prefix "$prefix/$1/" --max-keys 1 \
-    --query 'KeyCount' --output text 2>/dev/null || echo 0
+export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+export RCLONE_CONFIG_R2_ENDPOINT="$endpoint"
+export RCLONE_CONFIG_R2_REGION="auto"
+# Two flags Ubuntu's rclone needs against a bucket-scoped R2 token: without
+# no_check_bucket every upload is preceded by a CreateBucket that the token
+# denies (AccessDenied on what looks like a plain write), and without
+# no_head the post-upload verification trips a 501 on the first attempt.
+export RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true RCLONE_CONFIG_R2_NO_HEAD=true
+first_object() {
+  rclone lsf "r2:$bucket/$prefix/$1/" --recursive --files-only 2>/dev/null | head -1
 }
 
-pages=$(list_count pageserver)
-if [ "${pages:-0}" = "0" ] || [ "${pages:-0}" = "None" ]; then
+pages=$(first_object pageserver)
+if [ -z "$pages" ]; then
   echo "neon-smoke: no pageserver objects under $prefix/pageserver/ in R2" >&2
   exit 1
 fi
@@ -70,24 +80,31 @@ fi
 # generated password is for.
 run_psql "$admin_pw" "postgresql://cloud_admin@127.0.0.1:55433/postgres?connect_timeout=10" \
   -tAc "SELECT pg_switch_wal();" >/dev/null
-wal=0
+wal=""
 for _ in $(seq 1 24); do
-  wal=$(list_count safekeeper)
-  [ "${wal:-0}" != "0" ] && [ "${wal:-0}" != "None" ] && break
+  wal=$(first_object safekeeper)
+  [ -n "$wal" ] && break
   sleep 5
 done
-if [ "${wal:-0}" = "0" ] || [ "${wal:-0}" = "None" ]; then
+if [ -z "$wal" ]; then
   echo "neon-smoke: no safekeeper WAL segments under $prefix/safekeeper/ in R2 after pg_switch_wal" >&2
   exit 1
 fi
 
 # --- complete the ownership handshake ---------------------------------------
-ready=$(mktemp)
-if ! s3 get-object --bucket "$bucket" --key "$prefix/.colors-ready" "$ready" >/dev/null 2>&1; then
-  printf '%s' "neon-fixture" > "$ready"
-  s3 put-object --bucket "$bucket" --key "$prefix/.colors-ready" --body "$ready" >/dev/null
+# Emptiness counts as absence: a 0-byte marker satisfies a bare existence
+# check forever while carrying no ownership, so the test is on content and
+# the write is verified by read-back.
+if [ "$(rclone cat "r2:$bucket/$prefix/.colors-ready" 2>/dev/null)" != "neon-fixture" ]; then
+  ready=$(mktemp); printf '%s' "neon-fixture" > "$ready"
+  rclone copyto "$ready" "r2:$bucket/$prefix/.colors-ready"
+  rm -f "$ready"
+  back=$(rclone cat "r2:$bucket/$prefix/.colors-ready" 2>/dev/null || true)
+  if [ "$back" != "neon-fixture" ]; then
+    echo "neon-smoke: ready marker read back as '$back', expected 'neon-fixture'" >&2
+    exit 1
+  fi
   echo "CHANGED: wrote ready marker"
 fi
-rm -f "$ready"
 
 echo "neon-smoke: round-trip, auth negatives, and R2 evidence all hold"

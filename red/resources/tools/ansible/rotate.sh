@@ -43,11 +43,16 @@ next=$(mktemp /etc/neon/config.json.next.XXXXXX)
 jq --arg role "$role" --arg v "$verifier" \
   '(.spec.cluster.roles[] | select(.name == $role) | .encrypted_password) = $v' \
   "$spec" > "$next"
-chmod 0600 "$next"
+# The postgres user of the compute container (uid 1000) must be able to read
+# the spec or compute_ctl dies with a bare Permission denied (os error 13).
+chown 1000:1000 "$next"
+chmod 0400 "$next"
 mv "$next" "$spec"
 
 rollback() {
-  mv "$backup" "$spec"; chmod 0600 "$spec"
+  mv "$backup" "$spec"
+  chown 1000:1000 "$spec"
+  chmod 0400 "$spec"
   recreate_compute || true
   echo "neon-rotate: FAILED — previous spec restored, old password still active" >&2
   exit 1

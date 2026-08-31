@@ -20,7 +20,7 @@
     - name: Install Docker and tooling
       ansible.builtin.apt:
         name: [docker.io, docker-compose-v2, ca-certificates, curl, jq, openssl,
-               python3, postgresql-client, awscli]
+               python3, postgresql-client, rclone]
         state: present
         update_cache: true
         cache_valid_time: 3600
@@ -150,9 +150,18 @@
             | .compute_ctl_config.jwks.keys[0].kid = $kid
             | .compute_ctl_config.jwks.keys[0].x = $x' \
            /opt/neon/config.json.tpl > "$next"
-        chmod 0600 "$next"
+        # Readable by the postgres user of the compute container (uid 1000)
+        # and nobody else: compute_ctl dies with a bare `Permission denied
+        # (os error 13)` on a root-owned 0600 spec. The verifiers inside are
+        # salted hashes, not passwords, but they still get the narrowest
+        # readable ownership.
+        chown 1000:1000 "$next"
+        chmod 0400 "$next"
         if cmp -s "$next" /etc/neon/config.json 2>/dev/null; then
           rm -f "$next"
+          # Same content: still enforce the ownership the container needs
+          chown 1000:1000 /etc/neon/config.json
+          chmod 0400 /etc/neon/config.json
           echo unchanged
         else
           mv "$next" /etc/neon/config.json

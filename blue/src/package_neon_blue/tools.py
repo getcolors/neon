@@ -235,10 +235,15 @@ def tunnel_args(opts: dict, port: int) -> list[str]:
     """An ssh tunnel through the generated `~/.ssh/config` alias — the
     supported client path, exercised end to end: the alias, the identity file,
     and the forward. `-f` returns once the forward is up; the remote `sleep`
-    bounds its lifetime so nothing needs killing on the way out."""
-    return ["ssh", "-f", "-o", "ExitOnForwardFailure=yes", "-o", "BatchMode=yes",
-            "-L", f"{port}:127.0.0.1:55433",
-            ssh_config.host_alias(opts), "sleep", "45"]
+    bounds its lifetime so nothing needs killing on the way out. The bash
+    wrapper exists for the streams: the daemonized child inherits
+    stdout/stderr, and a runner that waits for the pipes to close would
+    otherwise block until the sleep expires — returning exactly when the
+    tunnel dies."""
+    return ["bash", "-c",
+            "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes"
+            f" -L {port}:127.0.0.1:55433 "
+            f"{ssh_config.host_alias(opts)} sleep 45 >/dev/null 2>&1"]
 
 
 # One deployment-scoped row, updated deterministically: the same statement on
@@ -289,7 +294,9 @@ async def acceptance_step(opts: dict) -> dict:
             return {**opts, "blue/exit": 1,
                     "blue/err": ("acceptance: the tunnelled smoke round-trip failed: "
                                  + str(ok.err or "").strip())}
-        if str(ok.out or "").strip() != "1":
+        # psql prints the INSERT command tag before the count; the count is
+        # the last line.
+        if str(ok.out or "").strip().splitlines()[-1:] != ["1"]:
             return {**opts, "blue/exit": 1,
                     "blue/err": ("acceptance: colors_smoke should hold exactly one row, got "
                                  + str(ok.out or "").strip())}

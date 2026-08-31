@@ -24,23 +24,38 @@ prefix="<{ neon-r2-prefix }>"
 endpoint="<{ neon-r2-endpoint }>"
 ps="http://127.0.0.1:9898"
 
+# rclone, not awscli: Ubuntu 24.04 carries no awscli package, and rclone is
+# already this workspace's S3 tool of choice on hosts. Configured entirely
+# from the environment — no config file to manage or leak.
 set -a; . /etc/neon/r2.env; set +a
-s3() { aws s3api "$@" --endpoint-url "$endpoint" --region "<{ neon-r2-region }>"; }
+export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+export RCLONE_CONFIG_R2_ENDPOINT="$endpoint"
+export RCLONE_CONFIG_R2_REGION="<{ neon-r2-region }>"
+# Two flags Ubuntu's rclone needs against a bucket-scoped R2 token: without
+# no_check_bucket every upload is preceded by a CreateBucket that the token
+# denies (AccessDenied on what looks like a plain write), and without
+# no_head the post-upload verification trips a 501 on the first attempt.
+export RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true RCLONE_CONFIG_R2_NO_HEAD=true
 
 get_marker() {
-  local key="$prefix/$1" out
-  out=$(mktemp)
-  if s3 get-object --bucket "$bucket" --key "$key" "$out" >/dev/null 2>&1; then
-    cat "$out"; rm -f "$out"
-  else
-    rm -f "$out"; return 1
-  fi
+  rclone cat "r2:$bucket/$prefix/$1" 2>/dev/null
 }
 put_marker() {
-  local key="$prefix/$1" body
+  # copyto with a known size, never rcat: the streaming upload of this
+  # rclone is a 501 against R2. Verified by read-back: an empty or wrong
+  # marker that went unnoticed here would satisfy existence checks forever
+  # and silently corrupt the ownership handshake.
+  local body back
   body=$(mktemp); printf '%s' "$2" > "$body"
-  s3 put-object --bucket "$bucket" --key "$key" --body "$body" >/dev/null
+  rclone copyto "$body" "r2:$bucket/$prefix/$1"
   rm -f "$body"
+  back=$(get_marker "$1" || true)
+  if [ "$back" != "$2" ]; then
+    echo "bootstrap: marker $1 read back as '$back', expected '$2'" >&2
+    return 1
+  fi
 }
 
 # --- prefix ownership -------------------------------------------------------
@@ -58,9 +73,8 @@ elif [ -n "$init" ]; then
   fi
   echo "bootstrap: resuming this deployment's interrupted bootstrap"
 else
-  count=$(s3 list-objects-v2 --bucket "$bucket" --prefix "$prefix/" --max-keys 1 \
-            --query 'KeyCount' --output text 2>/dev/null || echo 0)
-  if [ "${count:-0}" != "0" ] && [ "${count:-0}" != "None" ]; then
+  first=$(rclone lsf "r2:$bucket/$prefix/" --recursive --files-only 2>/dev/null | head -1)
+  if [ -n "$first" ]; then
     echo "bootstrap: R2 prefix $prefix/ holds data but no ownership marker; refusing to adopt." >&2
     echo "bootstrap: if this prefix is known-stale, delete it in R2 and re-run create." >&2
     exit 1
