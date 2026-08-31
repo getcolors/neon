@@ -4,7 +4,7 @@
 # dependencies = ["package-neon-blue", "blue"]
 #
 # [tool.uv.sources]
-# package-neon-blue = { git = "https://github.com/getcolors/neon.git", rev = "59594201e19abbc6f038b60b402784c4ca84f264", subdirectory = "blue" }
+# package-neon-blue = { git = "https://github.com/getcolors/neon.git", rev = "bf1df14e88bf2e169dff1dc5c02b1ffbc1a37a5c", subdirectory = "blue" }
 # blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
 #
 # [tool.uv]
