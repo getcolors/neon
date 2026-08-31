@@ -1,15 +1,20 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["package-neon-blue", "blue"]
+#
+# [tool.uv.sources]
+# package-neon-blue = { git = "https://github.com/getcolors/neon.git", rev = "59594201e19abbc6f038b60b402784c4ca84f264", subdirectory = "blue" }
+# blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
+#
+# [tool.uv]
+# override-dependencies = ["blue @ git+https://github.com/getcolors/blue.git@290f313ead5ca162875c33a049c880da017eae09"]
 # ///
 #
 # Managed by `bb pin` — do not edit by hand, and never invent a SHA.
 #
-# UNPINNED: this payload has not been stamped yet. `bb pin` collapses this
-# paragraph and adds the git sources for package-neon-blue and blue once
-# the neon repository has been pushed. Point the launcher at a working tree
-# meanwhile: NEON_LIB_ROOT=/path/to/neon
+# Stamped by `bb pin`. NEON_LIB_ROOT=/path/to/neon still overrides the
+# pin with a working tree.
 """Thin launcher for package-neon-blue.
 
 This file is both the skill payload and the repository entry point —

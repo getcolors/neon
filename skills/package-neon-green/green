@@ -51,7 +51,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private neon-sha nil)
+(def ^:private neon-sha "59594201e19abbc6f038b60b402784c4ca84f264")
 
 (def ^:private neon-git-url "https://github.com/getcolors/neon.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")
