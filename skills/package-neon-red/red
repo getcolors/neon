@@ -36,7 +36,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-neon-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-neon-red": "github:getcolors/neon#bf1df14e88bf2e169dff1dc5c02b1ffbc1a37a5c",
+  "package-neon-red": "github:getcolors/neon#3b4a5e0cf90c252013f5a2a48551d4af90a01e80",
   "package-once-red": "github:getcolors/once#759eb0311b4bdf881eab813cfe5d00f76b9310cc",
   "red": "github:getcolors/red#db9bfe61282e2093f4098bf5a6ee0cd10added6e",
 };
