@@ -1,7 +1,8 @@
 import { parName } from "red/cli";
 import type { Opts } from "red/workflow";
 import { providers } from "package-once-red";
-import { onceSsh } from "./once.ts";
+import {plan_deployment,registry} from "colors-compute-red";
+import * as compute from "./compute.ts";
 
 export const profilePar = parName("profile");
 
@@ -22,9 +23,6 @@ export const required = [
   "neon-tenant-id", "neon-timeline-id",
   "neon-database", "neon-role",
   "neon-r2-bucket", "neon-r2-endpoint", "neon-r2-region",
-  "vultr-region", "vultr-plan", "vultr-os-id",
-  "vultr-ssh-sources",
-  "r2-bucket", "r2-endpoint",
 ];
 
 export const imageKeys = ["neon-image", "neon-compute-image"];
@@ -52,14 +50,13 @@ export function placeholder(value: unknown): boolean {
 // every label, including the firewall's, derives from this and never from the
 // raw override key or a second copy of the profile (§3).
 export function computeName(opts: Opts): string {
-  const override = opts["vultr-name"];
-  return placeholder(override) ? String(opts.profile) : String(override).trim();
+  return plan_deployment(opts,compute.topology,compute.requirements(opts)).cluster.nodes[0].name;
 }
 
 // Whether this deployment owns its machine keypair. Delegates to ONCE, the
 // standard's reference implementation, so one rule decides it everywhere.
 export function keygen(opts: Opts): boolean {
-  return onceSsh.keygen(opts);
+  return plan_deployment(opts,compute.topology,compute.requirements(opts)).key.mode === 'managed';
 }
 
 export function envErrors(env: Record<string, string | undefined>): string[] {
@@ -73,12 +70,7 @@ export function stateErrors(opts: Opts): string[] {
   for (const key of required) {
     if (missing(opts[key])) errors.push(`:${key} is required`);
   }
-  if (opts["provider-compute"] !== "vultr") {
-    errors.push(":provider-compute must be vultr");
-  }
-  if (!["local", "s3", "r2"].includes(String(opts["provider-backend"]))) {
-    errors.push(":provider-backend must be local, s3, or r2");
-  }
+  errors.push(...compute.errors(opts));
   if (typeof opts["compute-prevent-destroy"] !== "boolean") {
     errors.push(":compute-prevent-destroy must be true or false");
   }
@@ -125,19 +117,15 @@ export function stateErrors(opts: Opts): string[] {
       !urlRe.test(String(opts["neon-r2-endpoint"]))) {
     errors.push(":neon-r2-endpoint must be an https URL");
   }
-  const osId = opts["vultr-os-id"];
-  if (!(missing(osId) || (typeof osId === "number" && Number.isInteger(osId)))) {
-    errors.push(":vultr-os-id must be Vultr's numeric operating-system id");
-  }
   return errors;
 }
 
 export function backendSecrets(opts: Opts): string[] {
-  return providers["provider-backend"]?.[String(opts["provider-backend"])]?.secrets ?? [];
+  return (registry.backend as Record<string,any>)?.[String(opts["provider-backend"])]?.secrets ?? [];
 }
 
 // What talking to the provider needs, on any real event.
-export const providerSecrets = ["vultr-api-key"];
+export const providerSecrets: string[] = [];
 
 // What converging the machine needs, and therefore only a create: the R2 pair
 // the pageserver and safekeeper write remote storage with. The database role
@@ -163,9 +151,9 @@ export function secretErrors(opts: Opts, event: string): string[] {
 export function tofuEnv(opts: Opts, slot: string): Record<string, string> {
   switch (slot) {
     case "provider-compute":
-      return { "vultr-api-key": "VULTR_API_KEY" };
+      return {};
     case "provider-backend":
-      return providers["provider-backend"]?.[String(opts["provider-backend"])]?.tofuEnv ?? {};
+      return (registry.backend as Record<string,any>)?.[String(opts["provider-backend"])]?.["tofu-env"] ?? {};
     default:
       return {};
   }

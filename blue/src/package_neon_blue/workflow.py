@@ -7,49 +7,17 @@ from blue.cli import par_name, read_pars
 from blue.lifecycle import preflight
 from blue.workflow import advice_add, failed, workflow
 
-from . import ssh, ssh_config, tools, validate
+from . import compute, ssh_config, tools, validate
 
 DEFAULTS = {"provider-compute": "vultr",
-            "provider-backend": "local", "compute-prevent-destroy": True,
+            "provider-backend": "r2", "compute-prevent-destroy": True,
             "workdir": ".colors"}
 
 
-async def state_output(opts: dict) -> dict | None:
-    """The compute stage's applied `params`, or None when no state is readable.
-    The create matrix keys on this best-effort read: an unreadable state (a
-    fresh clone, a missing backend) counts as absent."""
-    try:
-        outputs = await tofu.outputs(tools.tool_dir(opts, tools.infrastructure_tool),
-                                     tools.backend_credential_env(opts))
-        return (outputs or {}).get("params")
-    except Exception:
-        return None
-
-
 async def start_step(original: dict, env: dict | None = None) -> dict:
-    # The machine key's create matrix and the Vultr preflight run before any
-    # template is rendered: an unowned key on disk or at the provider stops the
-    # run while stopping is still free. Delete fills the same template values —
-    # a destroy renders before it destroys — but checks nothing, because its
-    # key cleanup runs after the compute destroy.
-    async def after(opts, _env, context):
-        real, event = context["real"], context["event"]
-        if real and event == "delete":
-            return {**ssh.with_machine_key(opts),
-                    **((await state_output(opts)) or {}),
-                    "blue/exit": 0}
-        if real and event == "create":
-            opts = await ssh.ensure_key(opts, state_output)
-            if failed(opts):
-                return opts
-            opts = ssh.preflight(ssh.with_machine_key(opts))
-            if failed(opts):
-                return opts
-            opts = ssh_config.preflight(opts)
-            if failed(opts):
-                return opts
-            return {**opts, "blue/exit": 0}
-        return {**ssh.with_machine_key(opts), "blue/exit": 0}
+    def after(opts, _env, context):
+        current = {**opts, 'blue/exit':0}
+        return ssh_config.preflight(current) if context['real'] and context['event']=='create' else current
 
     return await preflight(
         original, defaults=DEFAULTS, overlay=read_pars, env=env,
@@ -69,7 +37,8 @@ async def start_step(original: dict, env: dict | None = None) -> dict:
 def wire_fn(step: str, run_opts: dict):
     if run_opts.get("blue/event") == "delete":
         return {
-            "neon/start": (start_step, "neon/ansible"),
+            "neon/start": (start_step, "neon/load"),
+            "neon/load": (compute.load_step, "neon/ansible"),
             # The `~/.ssh/config` block goes before the destroy, the opposite
             # of the keypair below. A block that outlives its host is stale but
             # harmless; a key that predeceases its host locks the operator out
@@ -77,8 +46,7 @@ def wire_fn(step: str, run_opts: dict):
             # standards/ssh-config.md.
             "neon/ansible": (tools.ansible_step, "neon/ssh-config"),
             "neon/ssh-config": (tools.ansible_local_step, "neon/infrastructure"),
-            "neon/infrastructure": (tools.infrastructure_step, "neon/ssh-cleanup"),
-            "neon/ssh-cleanup": (ssh.cleanup_step,),
+            "neon/infrastructure": (tools.infrastructure_step,),
         }.get(step)
     return {
         "neon/start": (start_step, "neon/infrastructure"),
@@ -99,13 +67,11 @@ def backend_advice(tool: str):
 
 
 side_effecting = ["neon/infrastructure", "neon/ssh-config",
-                  "neon/ansible", "neon/acceptance", "neon/ssh-cleanup"]
+                  "neon/ansible", "neon/acceptance", "neon/load"]
 
 
 def create_workflow():
     wf = workflow(start="neon/start", wire_fn=wire_fn)
-    wf = advice_add(wf, "neon/infrastructure", "before", "neon.workflow/backend",
-                    backend_advice(tools.infrastructure_tool))
     return dry_run.advise(progress.advise(wf), side_effecting)
 
 

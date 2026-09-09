@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Opts } from "red/workflow";
-import * as ssh from "../src/ssh.ts";
 import * as sshConfig from "../src/ssh-config.ts";
 import * as tools from "../src/tools.ts";
 import * as validate from "../src/validate.ts";
@@ -78,8 +77,8 @@ describe("validate", () => {
       "vultr-os-id": "2284",
     }));
     expect(errors.length).toBeGreaterThanOrEqual(6);
-    for (const part of ["digest", "vultr", "pg-version", "tenant-id", "role",
-                        "endpoint", "os-id"]) {
+    for (const part of ["digest", "digitalocean", "pg-version", "tenant-id", "role",
+                        "endpoint"]) {
       expect(errors.some((e) => e.includes(part))).toBe(true);
     }
   });
@@ -123,7 +122,7 @@ describe("validate", () => {
 
   test("a create names every package secret", () => {
     const errors = validate.secretErrors(fixture(), "create").join("\n");
-    for (const name of ["COLORS_PAR_VULTR_API_KEY",
+    for (const name of [
                         "COLORS_PAR_NEON_R2_ACCESS_KEY_ID",
                         "COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY"]) {
       expect(errors).toContain(name);
@@ -139,7 +138,7 @@ describe("validate", () => {
     // Destroying a machine must not require the credentials needed to converge
     // one; the R2 data pair should not be a lock on the exit.
     const errors = validate.secretErrors(fixture(), "delete").join("\n");
-    expect(errors).toContain("COLORS_PAR_VULTR_API_KEY");
+    expect(errors).not.toContain("COLORS_PAR_VULTR_API_KEY");
     expect(errors).not.toContain("COLORS_PAR_NEON_R2_ACCESS_KEY_ID");
   });
 });
@@ -147,14 +146,6 @@ describe("validate", () => {
 // --- tools -------------------------------------------------------------------
 
 describe("tools", () => {
-  test("firewall sources parse and infrastructure data carries the ssh mode", () => {
-    const data = tools.infrastructureData(fixture());
-    expect(tools.cidrs(data, "vultr-ssh-sources")).toEqual(["0.0.0.0/0", "::/0"]);
-    expect(data["ssh-keygen"]).toBe(true);
-    expect(data["compute-name"]).toBe("neon-fixture");
-    expect(tools.infrastructureData(optout())["ssh-keygen"]).toBe(false);
-  });
-
   test("cidrs accept overlay strings", () => {
     expect(tools.cidrs({ x: "10.0.0.0/8, 20.0.0.0/8" }, "x"))
       .toEqual(["10.0.0.0/8", "20.0.0.0/8"]);
@@ -254,145 +245,6 @@ describe("tools", () => {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
-  });
-});
-
-// --- ssh keypair (SSH Keypair Standard) --------------------------------------
-
-describe("ssh", () => {
-  test("build renders a stable placeholder path", () => {
-    const opts = ssh.withMachineKey(fixture({ "red/event": "build" }));
-    expect(String(opts["ssh-public-key-path"])).toStartWith(ssh.buildPlaceholderDir);
-    expect(opts["vultr-ssh-keys"]).toBe(opts["ssh-public-key-path"]);
-    expect(String(opts["ssh-private-key-path"])).not.toContain(home);
-  });
-
-  test("a dry-run renders the placeholder too", () => {
-    const opts = ssh.withMachineKey(fixture({ "red/event": "create", "red/dry-run": true }));
-    expect(String(opts["ssh-public-key-path"])).toStartWith(ssh.buildPlaceholderDir);
-  });
-
-  test("real events render the real path", () => {
-    const opts = ssh.withMachineKey(fixture({ "red/event": "create" }));
-    expect(opts["ssh-private-key-path"]).toBe(join(home, ".ssh", "neon-fixture"));
-    expect(opts["ssh-public-key-path"]).toBe(join(home, ".ssh", "neon-fixture.pub"));
-  });
-
-  test("opt-out passes through untouched", () => {
-    for (const event of ["build", "create", "delete"]) {
-      const opts = ssh.withMachineKey(optout({ "red/event": event }));
-      expect(opts["vultr-ssh-keys"]).toBe("00000000-0000-0000-0000-000000000000");
-      expect(opts["ssh-public-key-path"]).toBeUndefined();
-      expect(opts["ssh-keygen"]).toBeUndefined();
-    }
-  });
-
-  test("first create generates the keypair", async () => {
-    const opts = await ssh.ensureKey(fixture({ "red/event": "create" }), async () => undefined);
-    const prv = join(home, ".ssh", "neon-fixture");
-    const pub = `${prv}.pub`;
-    expect(opts["red/err"]).toBeUndefined();
-    expect(existsSync(prv)).toBe(true);
-    expect(existsSync(pub)).toBe(true);
-    // ed25519, no passphrase, profile-named comment
-    expect(readFileSync(pub, "utf8")).toContain("ssh-ed25519");
-    expect(readFileSync(pub, "utf8")).toContain("neon-fixture managed by Colors");
-    // 600 on the private key, 700 on ~/.ssh
-    expect(statSync(prv).mode & 0o777).toBe(0o600);
-    expect(statSync(join(home, ".ssh")).mode & 0o777).toBe(0o700);
-  });
-
-  test("converge reuses an existing key", async () => {
-    write(join(home, ".ssh", "neon-fixture"), "private");
-    write(join(home, ".ssh", "neon-fixture.pub"), "ssh-ed25519 AAAA test");
-    const opts = await ssh.ensureKey(fixture({ "red/event": "create" }),
-      async () => ({ ip: "192.0.2.10" }));
-    expect(opts["red/err"]).toBeUndefined();
-    expect(readFileSync(join(home, ".ssh", "neon-fixture"), "utf8")).toBe("private");
-  });
-
-  test("state without a key is an error", async () => {
-    const opts = await ssh.ensureKey(fixture({ "red/event": "create" }),
-      async () => ({ ip: "192.0.2.10" }));
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("does not hold the machine key");
-    expect(String(opts["red/err"])).toContain("rebuild");
-  });
-
-  test("a key without state is never overwritten", async () => {
-    const prv = join(home, ".ssh", "neon-fixture");
-    write(prv, "irreplaceable");
-    write(`${prv}.pub`, "ssh-ed25519 AAAA test");
-    const opts = await ssh.ensureKey(fixture({ "red/event": "create" }), async () => undefined);
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("no compute state is readable");
-    expect(String(opts["red/err"])).toContain("survives");
-    expect(readFileSync(prv, "utf8")).toBe("irreplaceable");
-  });
-
-  test("half a keypair is an error", async () => {
-    write(join(home, ".ssh", "neon-fixture"), "private");
-    const opts = await ssh.ensureKey(fixture({ "red/event": "create" }), async () => undefined);
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("half a keypair");
-  });
-
-  test("opt-out generates nothing", async () => {
-    const opts = await ssh.ensureKey(optout({ "red/event": "create" }), async () => undefined);
-    expect(opts["red/err"]).toBeUndefined();
-    expect(existsSync(join(home, ".ssh"))).toBe(false);
-  });
-
-  test("preflight passes when no account key matches, or when it is ours", async () => {
-    const clean = await ssh.preflight(ssh.withMachineKey(fixture({ "red/event": "create" })),
-      async () => [{ id: "1", name: "someone-else", public: "ssh-ed25519 BBBB" }]);
-    expect(clean["red/err"]).toBeUndefined();
-    const owned = await ssh.preflight(
-      ssh.withMachineKey(fixture({ "red/event": "create",
-        "once/ssh-state-params": { ssh_key_id: "abc" } })),
-      async () => [{ id: "abc", name: "neon-fixture", public: "ssh-ed25519 AAAA" }]);
-    expect(owned["red/err"]).toBeUndefined();
-  });
-
-  test("preflight refuses our leftover key", async () => {
-    write(join(home, ".ssh", "neon-fixture.pub"), "ssh-ed25519 AAAA comment");
-    const opts = await ssh.preflight(ssh.withMachineKey(fixture({ "red/event": "create" })),
-      async () => [{ id: "abc", name: "neon-fixture", public: "ssh-ed25519 AAAA" }]);
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("previous delete");
-    expect(String(opts["red/err"])).toContain("delete that key");
-  });
-
-  test("preflight refuses a foreign key and says do not delete it", async () => {
-    write(join(home, ".ssh", "neon-fixture.pub"), "ssh-ed25519 OURS comment");
-    const opts = await ssh.preflight(ssh.withMachineKey(fixture({ "red/event": "create" })),
-      async () => [{ id: "abc", name: "neon-fixture", public: "ssh-ed25519 THEIRS" }]);
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("Do not delete it");
-  });
-
-  test("preflight failure is an error, not a skip", async () => {
-    const opts = await ssh.preflight(ssh.withMachineKey(fixture({ "red/event": "create" })),
-      async () => { throw new Error("HTTP 500"); });
-    expect(opts["red/exit"]).toBe(1);
-    expect(String(opts["red/err"])).toContain("cannot list");
-  });
-
-  test("delete removes the keypair; ~/.ssh itself survives", () => {
-    write(join(home, ".ssh", "neon-fixture"), "private");
-    write(join(home, ".ssh", "neon-fixture.pub"), "public");
-    ssh.cleanupStep(fixture({ "red/event": "delete", "ssh-keygen": true }));
-    expect(existsSync(join(home, ".ssh", "neon-fixture"))).toBe(false);
-    expect(existsSync(join(home, ".ssh", "neon-fixture.pub"))).toBe(false);
-    expect(existsSync(join(home, ".ssh"))).toBe(true);
-  });
-
-  test("cleanup is inert on create and in opt-out mode", () => {
-    write(join(home, ".ssh", "neon-fixture"), "private");
-    ssh.cleanupStep(fixture({ "red/event": "create", "ssh-keygen": true }));
-    expect(existsSync(join(home, ".ssh", "neon-fixture"))).toBe(true);
-    ssh.cleanupStep(optout({ "red/event": "delete" }));
-    expect(existsSync(join(home, ".ssh", "neon-fixture"))).toBe(true);
   });
 });
 
@@ -497,14 +349,14 @@ describe("workflow", () => {
                              { "red/event": "create", "red/dry-run": true }]) {
       const result = await workflow.startStep(fixture(overrides), {});
       expect(result["red/exit"]).toBe(0);
-      expect(String(result["ssh-public-key-path"])).toStartWith("/home/build-placeholder");
+      expect(result["ssh-public-key-path"]).toBeUndefined();
     }
   });
 
   test("a real create requires credentials", async () => {
     const result = await workflow.startStep(fixture({ "red/event": "create" }), {});
     expect(result["red/exit"]).toBe(2);
-    expect(String(result["red/err"])).toContain("COLORS_PAR_VULTR_API_KEY");
+    expect(String(result["red/err"])).not.toContain("COLORS_PAR_VULTR_API_KEY");
     expect(String(result["red/err"])).toContain("COLORS_PAR_NEON_R2_ACCESS_KEY_ID");
     // No DNS provider in this package: nothing is reachable by name, so no
     // Cloudflare token may be demanded.
@@ -531,10 +383,9 @@ describe("workflow", () => {
   test("delete removes the config block before the destroy and the key after it", () => {
     const next = (step: string) =>
       (workflow.wireFn(step, { "red/event": "delete" }) ?? []).slice(1);
-    expect(next("neon/start")).toEqual(["neon/ansible"]);
+    expect(next("neon/start")).toEqual(["neon/load"]);
     expect(next("neon/ansible")).toEqual(["neon/ssh-config"]);
     expect(next("neon/ssh-config")).toEqual(["neon/infrastructure"]);
-    expect(next("neon/infrastructure")).toEqual(["neon/ssh-cleanup"]);
-    expect(next("neon/ssh-cleanup")).toEqual([]);
+    expect(next("neon/infrastructure")).toEqual([]);
   });
 });

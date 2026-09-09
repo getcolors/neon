@@ -7,21 +7,6 @@ def spec_for(opts, file):
                 if str(s["target"]).endswith(file))
 
 
-def test_firewall_sources_parse():
-    data = tools.infrastructure_data(fixture())
-    assert tools.cidrs(data, "vultr-ssh-sources") == ["0.0.0.0/0", "::/0"]
-
-
-def test_infrastructure_data_carries_the_ssh_mode():
-    assert tools.infrastructure_data(fixture())["ssh-keygen"] is True
-    assert tools.infrastructure_data(optout())["ssh-keygen"] is False
-
-
-def test_infrastructure_data_resolves_the_compute_name():
-    # Compute Name Standard §3: every label derives from the one resolved name.
-    assert tools.infrastructure_data(fixture())["compute-name"] == "neon-fixture"
-
-
 def test_the_r2_prefix_is_namespaced_by_profile():
     # Two deployments sharing a bucket must never share a prefix: the profile
     # is the namespace, and the tofu state at <profile>/<stage>.tfstate is a

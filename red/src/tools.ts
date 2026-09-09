@@ -1,3 +1,4 @@
+import * as compute from "./compute.ts";
 import * as ansible from "red/ansible";
 import { stageDir } from "red/cli";
 import { PRESERVE_JINJA_DELIMITERS, contentSpec, type Spec, type Template } from "red/scaffold";
@@ -23,7 +24,6 @@ import ansibleBootstrap from "../resources/tools/ansible/bootstrap.sh" with { ty
 import ansibleSmoke from "../resources/tools/ansible/smoke.sh" with { type: "text" };
 import ansibleStatus from "../resources/tools/ansible/status.sh" with { type: "text" };
 import ansibleRotate from "../resources/tools/ansible/rotate.sh" with { type: "text" };
-import infrastructureMainTf from "../resources/tools/infrastructure/main.tf" with { type: "text" };
 
 export const infrastructureTool = "neon-infrastructure";
 export const ansibleTool = "neon-ansible";
@@ -83,26 +83,7 @@ export function r2Prefix(opts: Opts): string {
 
 // ---------------------------------------------------------------- compute
 
-export function infrastructureData(opts: Opts): Opts {
-  return {
-    ...opts,
-    "compute-name": validate.computeName(opts),
-    "ssh-keygen": validate.keygen(opts),
-    "ssh-sources-hcl": tofu.hclList(cidrs(opts, "vultr-ssh-sources")),
-  };
-}
-
-export async function infrastructureStep(opts: Opts): Promise<Opts> {
-  const dir = toolDir(opts, infrastructureTool);
-  const specs = [spec(template("infrastructure/main.tf", infrastructureMainTf),
-                      `${dir}/main.tf`, infrastructureData(opts))];
-  const result = await tofu.tofuWithSpec(opts, specs,
-    { dir, env: credentialEnv(opts, "provider-compute") });
-  if (failed(result)) return result;
-  if (opts["red/event"] === "build") return { ...result, ...fallbackParams(opts) };
-  if (opts["red/event"] === "delete") return result;
-  return { ...result, ...fallbackParams(opts), ...outputParams(result) };
-}
+export const infrastructureStep = compute.infrastructureStep;
 
 // ---------------------------------------------------------- ansible (local)
 
@@ -113,7 +94,7 @@ export async function infrastructureStep(opts: Opts): Promise<Opts> {
 export function ansibleLocalData(opts: Opts): Opts {
   return {
     ...opts,
-    "ssh-keygen": validate.keygen(opts),
+    "ssh-keygen": (opts['colors-compute/key'] ? (opts['colors-compute/key'] as any).mode === 'managed' : validate.keygen(opts)),
     "ssh-config-identity-file": sshConfig.identityFile(opts),
   };
 }
@@ -131,6 +112,7 @@ export function ansibleLocalSpecs(opts: Opts): Spec[] {
 // Write or remove the `~/.ssh/config` block. The same playbook serves both
 // events; `block_state` is what distinguishes them.
 export async function ansibleLocalStep(opts: Opts): Promise<Opts> {
+  if(opts["neon/already-destroyed"]) return opts;
   const dir = toolDir(opts, ansibleLocalTool);
   const isDelete = opts["red/event"] === "delete";
   return ansible.ansibleWithSpec(opts, {
@@ -172,7 +154,7 @@ export function inventory(opts: Opts): string {
           hosts: {
             [String(opts.profile)]: {
               ansible_host: opts.ip ?? "192.0.2.10",
-              ansible_user: "root",
+              ansible_user: opts.user ?? "root",
             },
           },
         },
@@ -193,7 +175,7 @@ export function ansibleData(opts: Opts): Opts {
   return {
     ...opts,
     ip: opts.ip ?? "192.0.2.10",
-    "ssh-keygen": validate.keygen(opts),
+    "ssh-keygen": (opts['colors-compute/key'] ? (opts['colors-compute/key'] as any).mode === 'managed' : validate.keygen(opts)),
     "neon-r2-prefix": r2Prefix(opts),
   };
 }
@@ -233,7 +215,7 @@ export async function ansibleStep(opts: Opts): Promise<Opts> {
     dir,
     inventory: "inventory.json",
     playbooks: { create: "main.yml", delete: "cleanup.yml" },
-    hostKeyChecking: false,
+    hostKeyChecking: false, privateKey: opts["ssh-private-key-path"] as string | undefined,
   }, ansibleSpecs(opts));
 }
 
@@ -270,6 +252,7 @@ export function psqlArgs(opts: Opts, port: number, sql: string): string[] {
 export function tunnelArgs(opts: Opts, port: number): string[] {
   return ["bash", "-c",
     "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes" +
+    (opts["ssh-private-key-path"] ? " -i '"+String(opts["ssh-private-key-path"]).replaceAll("'", "'\\''")+"'" : "") +
     ` -L ${port}:127.0.0.1:55433 ` +
     `${sshConfig.hostAlias(opts)} sleep 45 >/dev/null 2>&1`];
 }
@@ -284,7 +267,7 @@ export const smokeSql =
 // The generated application-role password, read over SSH and held only in this
 // process. Never merged into opts, never printed.
 export async function readRemotePassword(opts: Opts): Promise<string | undefined> {
-  const result = await runQuiet(["ssh", "-o", "BatchMode=yes", sshConfig.hostAlias(opts),
+  const result = await runQuiet(["ssh", "-o", "BatchMode=yes", ...(opts["ssh-private-key-path"] ? ["-i",String(opts["ssh-private-key-path"])] : []), sshConfig.hostAlias(opts),
     "cat", "/etc/neon/secrets/neon_role_password"], {}, 20000);
   if (result.exit !== 0) return undefined;
   const password = String(result.out ?? "").trim();

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import shlex
 from pathlib import Path
 import re
 
@@ -13,7 +14,7 @@ from blue.cli import stage_dir
 from blue.runtime import runtime
 from blue.scaffold import PRESERVE_JINJA_DELIMITERS, content_spec
 
-from . import ssh_config, validate
+from . import compute, ssh_config, validate
 
 infrastructure_tool = "neon-infrastructure"
 ansible_tool = "neon-ansible"
@@ -83,26 +84,7 @@ def r2_prefix(opts: dict) -> str:
 # ---------------------------------------------------------------- compute
 
 
-def infrastructure_data(opts: dict) -> dict:
-    return {**opts,
-            "compute-name": validate.compute_name(opts),
-            "ssh-keygen": validate.keygen(opts),
-            "ssh-sources-hcl": tofu.hcl_list(cidrs(opts, "vultr-ssh-sources"))}
-
-
-async def infrastructure_step(opts: dict) -> dict:
-    dir = tool_dir(opts, infrastructure_tool)
-    specs = [spec(template("infrastructure", "main.tf"), f"{dir}/main.tf",
-                  infrastructure_data(opts))]
-    result = await tofu.tofu_with_spec(
-        opts, specs, dir=dir, env=credential_env(opts, "provider-compute"))
-    if (result.get("blue/exit") or 0) > 0:
-        return result
-    if opts.get("blue/event") == "build":
-        return {**result, **fallback_params(opts)}
-    if opts.get("blue/event") == "delete":
-        return result
-    return {**result, **fallback_params(opts), **(output_params(result) or {})}
+infrastructure_step = compute.compute_step
 
 
 # ---------------------------------------------------------- ansible (local)
@@ -114,7 +96,7 @@ def ansible_local_data(opts: dict) -> dict:
     rendered playbook carries no IP and is identical on every workstation (SSH
     Config Standard §6)."""
     return {**opts,
-            "ssh-keygen": validate.keygen(opts),
+            "ssh-keygen": (opts['colors-compute/key']['mode'] == 'managed' if 'colors-compute/key' in opts else validate.keygen(opts)),
             "ssh-config-identity-file": ssh_config.identity_file(opts)}
 
 
@@ -128,6 +110,7 @@ def ansible_local_specs(opts: dict) -> list[dict]:
 async def ansible_local_step(opts: dict) -> dict:
     """Write or remove the `~/.ssh/config` block. The same playbook serves both
     events; `block_state` is what distinguishes them."""
+    if opts.get('neon/already-destroyed'): return opts
     dir = tool_dir(opts, ansible_local_tool)
     delete = opts.get("blue/event") == "delete"
     return await ansible_with_spec(
@@ -163,7 +146,7 @@ def inventory(opts: dict) -> str:
     return _pretty(
         {"all": {"children": {"neon": {"hosts": {
             opts.get("profile"): {"ansible_host": opts.get("ip") or "192.0.2.10",
-                                  "ansible_user": "root"}}}}}})
+                                  "ansible_user": opts.get("user") or "root"}}}}}})
 
 
 def ansible_data(opts: dict) -> dict:
@@ -178,7 +161,7 @@ def ansible_data(opts: dict) -> dict:
     golden, not in this map."""
     return {**opts,
             "ip": opts.get("ip") or "192.0.2.10",
-            "ssh-keygen": validate.keygen(opts),
+            "ssh-keygen": (opts['colors-compute/key']['mode'] == 'managed' if 'colors-compute/key' in opts else validate.keygen(opts)),
             "neon-r2-prefix": r2_prefix(opts)}
 
 
@@ -207,7 +190,7 @@ async def ansible_step(opts: dict) -> dict:
         opts, ansible_specs(opts),
         dir=dir, inventory="inventory.json",
         playbooks={"create": "main.yml", "delete": "cleanup.yml"},
-        host_key_checking=False)
+        host_key_checking=False, private_key=opts.get("ssh-private-key-path"))
 
 
 # ------------------------------------------------------------- acceptance
@@ -247,6 +230,7 @@ def tunnel_args(opts: dict, port: int) -> list[str]:
     tunnel dies."""
     return ["bash", "-c",
             "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes"
+            + (" -i " + shlex.quote(str(opts["ssh-private-key-path"])) if opts.get("ssh-private-key-path") else "") +
             f" -L {port}:127.0.0.1:55433 "
             f"{ssh_config.host_alias(opts)} sleep 45 >/dev/null 2>&1"]
 
@@ -263,7 +247,7 @@ async def read_remote_password(opts: dict) -> str | None:
     """The generated application-role password, read over SSH and held only in
     this process. Never merged into opts, never printed."""
     result = await run_quiet(
-        ["ssh", "-o", "BatchMode=yes", ssh_config.host_alias(opts),
+        ["ssh", "-o", "BatchMode=yes", *(["-i", str(opts["ssh-private-key-path"])] if opts.get("ssh-private-key-path") else []), ssh_config.host_alias(opts),
          "cat", "/etc/neon/secrets/neon_role_password"], {}, 20000)
     if result.exit != 0:
         return None

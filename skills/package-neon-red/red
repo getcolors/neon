@@ -37,8 +37,7 @@ import { homedir } from "node:os";
 // and break the development symlink at red/red.
 const PINS = {
   "package-neon-red": "github:getcolors/neon#3b4a5e0cf90c252013f5a2a48551d4af90a01e80",
-  "package-once-red": "github:getcolors/once#759eb0311b4bdf881eab813cfe5d00f76b9310cc",
-  "red": "github:getcolors/red#db9bfe61282e2093f4098bf5a6ee0cd10added6e",
+  "package-once-red": "github:getcolors/once#a1fe1be7a427dd2e406ff7befd1c43a53e7c3618",
 };
 
 // PINS is the only source of versions, as green's inline SHA and blue's PEP

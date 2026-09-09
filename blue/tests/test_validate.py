@@ -39,8 +39,8 @@ def test_reports_all_errors():
         "neon-r2-endpoint": "ftp://example",
         "vultr-os-id": "2284"}))
     assert len(errors) >= 6
-    for part in ["digest", "vultr", "pg-version", "tenant-id", "role",
-                 "endpoint", "os-id"]:
+    for part in ["digest", "digitalocean", "pg-version", "tenant-id", "role",
+                 "endpoint"]:
         assert any(part in e for e in errors), part
 
 
@@ -81,7 +81,7 @@ def test_profile_overlay_is_refused():
 
 def test_a_create_names_every_package_secret():
     errors = "\n".join(validate.secret_errors(fixture(), "create"))
-    for name in ["COLORS_PAR_VULTR_API_KEY",
+    for name in [
                  "COLORS_PAR_NEON_R2_ACCESS_KEY_ID",
                  "COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY"]:
         assert name in errors, name
@@ -96,5 +96,5 @@ def test_a_delete_asks_only_for_the_providers():
     # Destroying a machine must not require the credentials needed to converge
     # one; the R2 data pair should not be a lock on the exit.
     errors = "\n".join(validate.secret_errors(fixture(), "delete"))
-    assert "COLORS_PAR_VULTR_API_KEY" in errors
+    assert "COLORS_PAR_VULTR_API_KEY" not in errors
     assert "COLORS_PAR_NEON_R2_ACCESS_KEY_ID" not in errors

@@ -169,4 +169,4 @@ def test_delete_removes_the_block_before_the_destroy():
     delete = {"blue/event": "delete"}
     assert workflow.wire_fn("neon/ansible", delete)[1:] == ("neon/ssh-config",)
     assert workflow.wire_fn("neon/ssh-config", delete)[1:] == ("neon/infrastructure",)
-    assert workflow.wire_fn("neon/infrastructure", delete)[1:] == ("neon/ssh-cleanup",)
+    assert workflow.wire_fn("neon/infrastructure", delete)[1:] == ()

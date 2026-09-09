@@ -4,7 +4,7 @@ profile: neon-optout
 workdir: WORKDIR
 
 provider-compute: vultr
-provider-backend: local
+provider-backend: r2
 
 compute-prevent-destroy: true
 

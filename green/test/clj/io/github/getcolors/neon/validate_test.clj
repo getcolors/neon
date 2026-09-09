@@ -43,7 +43,7 @@
                          :neon-r2-endpoint "ftp://example"
                          :vultr-os-id "2284"))]
     (is (<= 6 (count errors)))
-    (doseq [part ["digest" "vultr" "pg-version" "tenant-id" "role" "endpoint" "os-id"]]
+    (doseq [part ["digest" "digitalocean" "pg-version" "tenant-id" "role" "endpoint"]]
       (is (some #(str/includes? % part) errors) part))))
 
 (deftest accepts-a-digest-pin
@@ -79,7 +79,7 @@
 
 (deftest a-create-names-every-package-secret
   (let [errors (str/join "\n" (validate/secret-errors (fixture) :create))]
-    (doseq [name ["COLORS_PAR_VULTR_API_KEY"
+    (doseq [name [
                   "COLORS_PAR_NEON_R2_ACCESS_KEY_ID"
                   "COLORS_PAR_NEON_R2_SECRET_ACCESS_KEY"]]
       (is (str/includes? errors name) name))
@@ -93,5 +93,5 @@
   ;; Destroying a machine must not require the credentials needed to converge
   ;; one; the R2 data pair should not be a lock on the exit.
   (let [errors (str/join "\n" (validate/secret-errors (fixture) :delete))]
-    (is (str/includes? errors "COLORS_PAR_VULTR_API_KEY"))
+    (is (not (str/includes? errors "COLORS_PAR_VULTR_API_KEY")))
     (is (not (str/includes? errors "COLORS_PAR_NEON_R2_ACCESS_KEY_ID")))))

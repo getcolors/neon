@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 
 from blue.cli import par_name
-from package_once_blue import ssh as once_ssh
+from colors_compute import plan_deployment, registry
+from . import compute
 from package_once_blue.validate import providers as once_providers
 
 profile_par = par_name("profile")
@@ -32,9 +33,6 @@ required = [
     "neon-tenant-id", "neon-timeline-id",
     "neon-database", "neon-role",
     "neon-r2-bucket", "neon-r2-endpoint", "neon-r2-region",
-    "vultr-region", "vultr-plan", "vultr-os-id",
-    "vultr-ssh-sources",
-    "r2-bucket", "r2-endpoint",
 ]
 
 image_keys = ["neon-image", "neon-compute-image"]
@@ -71,14 +69,14 @@ def compute_name(opts: dict) -> str:
     """What this deployment calls its machine. The one function that answers
     it — every label, including the firewall's, derives from this and never
     from the raw override key or a second copy of the profile (§3)."""
-    override = opts.get("vultr-name")
-    return _s(opts.get("profile")) if placeholder(override) else _s(override).strip()
+    return plan_deployment(opts, compute.TOPOLOGY, compute.requirements(opts))['cluster']['nodes'][0]['name']
+
 
 
 def keygen(opts: dict) -> bool:
     """Whether this deployment owns its machine keypair. Delegates to ONCE, the
     standard's reference implementation, so one rule decides it everywhere."""
-    return once_ssh.keygen(opts)
+    return plan_deployment(opts, compute.TOPOLOGY, compute.requirements(opts))['key']['mode'] == 'managed'
 
 
 def env_errors(env: dict) -> list[str]:
@@ -90,10 +88,7 @@ def env_errors(env: dict) -> list[str]:
 def state_errors(opts: dict) -> list[str]:
     errors: list[str] = []
     errors += [f":{k} is required" for k in required if missing(opts.get(k))]
-    if opts.get("provider-compute") != "vultr":
-        errors.append(":provider-compute must be vultr")
-    if opts.get("provider-backend") not in ("local", "s3", "r2"):
-        errors.append(":provider-backend must be local, s3, or r2")
+    errors += compute.errors(opts)
     if not isinstance(opts.get("compute-prevent-destroy"), bool):
         errors.append(":compute-prevent-destroy must be true or false")
     for k in image_keys:
@@ -130,19 +125,16 @@ def state_errors(opts: dict) -> list[str]:
     if not (missing(opts.get("neon-r2-endpoint"))
             or url_re.fullmatch(_s(opts.get("neon-r2-endpoint")))):
         errors.append(":neon-r2-endpoint must be an https URL")
-    os_id = opts.get("vultr-os-id")
-    if not (missing(os_id) or (isinstance(os_id, int) and not isinstance(os_id, bool))):
-        errors.append(":vultr-os-id must be Vultr's numeric operating-system id")
     return errors
 
 
 def backend_secrets(opts: dict) -> list[str]:
-    entry = once_providers["provider-backend"].get(str(opts.get("provider-backend")), {})
+    entry = registry()["backend"].get(str(opts.get("provider-backend")), {})
     return entry.get("secrets", [])
 
 
 # What talking to the provider needs, on any real event.
-provider_secrets = ["vultr-api-key"]
+provider_secrets = []
 
 # What converging the machine needs, and therefore only a create: the R2 pair
 # the pageserver and safekeeper write remote storage with. The database role
@@ -166,8 +158,8 @@ def secret_errors(opts: dict, event: str) -> list[str]:
 
 def tofu_env(opts: dict, slot: str) -> dict[str, str]:
     if slot == "provider-compute":
-        return {"vultr-api-key": "VULTR_API_KEY"}
+        return {}
     if slot == "provider-backend":
-        entry = once_providers["provider-backend"].get(str(opts.get("provider-backend")), {})
+        entry = registry()["backend"].get(str(opts.get("provider-backend")), {})
         return entry.get("tofu-env", {})
     return {}

@@ -4,7 +4,7 @@
 
 `neon` is a tri-colour Package Skill (green, red, blue) for self-hosted Neon —
 serverless Postgres with storage/compute separation — on one Vultr instance.
-OpenTofu manages the instance and a firewall that opens **22 only**; Ansible
+`colors-compute` owns VM, firewall, SSH keypair, and remote-state lifecycle. The package requests **22 only** and Ansible
 converges a Docker Compose stack of the storage broker, the pageserver, one
 safekeeper, and a compute node running Postgres under `compute_ctl`, with
 Cloudflare R2 as the remote storage for pageserver layers and safekeeper WAL.
@@ -79,17 +79,9 @@ touching `ssh_config.clj`, and `../workspace/standards/compute-name.md` for
 why there is no required `vultr-name` (the machine is named after the
 profile; the key is only the optional override).
 
-The keypair behaviour is ONCE's (`io.github.getcolors.once.ssh`), deliberately
-reused so one standard has one implementation. The `~/.ssh/config` block is
-this package's own copy, per the config standard §7. The two disagree on
-ordering on purpose — the config block is removed *before* the compute
-destroy, the keypair *after* it.
+The keypair and its registration are owned by `colors-compute`. The package owns the locked `~/.ssh/config` updater. It removes the profile alias before compute deletion; library cleanup removes managed keys only after cloud destruction succeeds. External private paths are passed explicitly to Ansible and acceptance SSH; external mode never adds IdentityFile to the managed alias.
 
-`build` and `--dry-run` render `/home/build-placeholder/.ssh/<profile>`
-rather than reading `~/.ssh`, which is what makes the committed goldens mean
-the same thing on every workstation. `bb golden` renders two fixtures because
-the keypair standard has two modes: keygen (`test/fixtures/colors.yml`) and
-opt-out (`test/fixtures/optout.yml`).
+Build and dry-run render deterministic library plans and never inspect local SSH files. Both keygen and external-key fixtures remain covered by parity and goldens.
 
 ## Secrets
 

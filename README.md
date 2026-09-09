@@ -128,3 +128,7 @@ Green is canonical; a behavioural change lands in all three colours in the
 same commit and passes parity. See `CLAUDE.md` for the traps this package
 has already paid for (the recreate-only compute container, the uid-1000
 pageserver, the missing testing APIs, the verifier-file determinism).
+
+Compute is delegated to the pinned `colors-compute` library. Its singleton topology preserves SSH-only public ingress and loopback application services. R2 or S3 state lives under `<profile>/compute/shared.tfstate` and `<profile>/compute/nodes/0.tfstate`, with a deployment journal; local compute state is unsupported. Existing `<profile>/neon-infrastructure.tfstate` is refused for explicit operator migration, never silently adopted. Build renders shared/node plans with their remote backend configuration.
+
+The package owns a locked profile SSH alias updater. Managed keys add `IdentityFile ~/.ssh/<profile>`; external private paths are explicit Ansible/acceptance inputs. The alias is removed before compute destruction. Application images, data-prefix ownership markers, generated passwords, and acceptance gates are unchanged. No live deployment was performed for this migration.

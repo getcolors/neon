@@ -8,18 +8,6 @@
 (defn- spec-for [opts file]
   (some #(when (str/ends-with? (str (:target %)) file) %) (tools/ansible-specs opts)))
 
-(deftest firewall-sources-parse
-  (let [data (tools/infrastructure-data (fixture))]
-    (is (= ["0.0.0.0/0" "::/0"] (tools/cidrs data :vultr-ssh-sources)))))
-
-(deftest infrastructure-data-carries-the-ssh-mode
-  (is (true? (:ssh-keygen (tools/infrastructure-data (fixture)))))
-  (is (false? (:ssh-keygen (tools/infrastructure-data (optout))))))
-
-(deftest infrastructure-data-resolves-the-compute-name
-  ;; Compute Name Standard §3: every label derives from the one resolved name.
-  (is (= "neon-fixture" (:compute-name (tools/infrastructure-data (fixture))))))
-
 (deftest the-r2-prefix-is-namespaced-by-profile
   ;; Two deployments sharing a bucket must never share a prefix: the profile
   ;; is the namespace, and the tofu state at <profile>/<stage>.tfstate is a

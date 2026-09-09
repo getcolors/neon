@@ -149,5 +149,5 @@
          (vec (rest (workflow/wire-fn :neon/ansible {:green/event :delete})))))
   (is (= [:neon/infrastructure]
          (vec (rest (workflow/wire-fn :neon/ssh-config {:green/event :delete})))))
-  (is (= [:neon/ssh-cleanup]
+  (is (= []
          (vec (rest (workflow/wire-fn :neon/infrastructure {:green/event :delete}))))))

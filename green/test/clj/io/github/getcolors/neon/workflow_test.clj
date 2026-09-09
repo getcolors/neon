@@ -16,13 +16,13 @@
                 (assoc (fixture) :green/event :create :green/dry-run true)]]
     (let [result (workflow/start-step opts {})]
       (is (= 0 (:green/exit result)))
-      (is (str/starts-with? (str (:ssh-public-key-path result)) "/home/build-placeholder")
+      (is (nil? (:ssh-public-key-path result))
           "a build must not name the operator's home directory"))))
 
 (deftest real-create-requires-credentials
   (let [r (workflow/start-step (assoc (fixture) :green/event :create) {})]
     (is (= 2 (:green/exit r)))
-    (is (str/includes? (:green/err r) "COLORS_PAR_VULTR_API_KEY"))
+    (is (not (str/includes? (:green/err r) "COLORS_PAR_VULTR_API_KEY")))
     (is (str/includes? (:green/err r) "COLORS_PAR_NEON_R2_ACCESS_KEY_ID"))
     ;; No DNS provider in this package: nothing is reachable by name, so no
     ;; Cloudflare token may be demanded.
@@ -49,8 +49,8 @@
   ;; The ordering is what makes "key present ⇔ deployment exists" hold: a
   ;; failed destroy never reaches the cleanup step, and correctly leaves the
   ;; key that is still the only credential to whatever survived.
-  (is (= [:neon/ansible]
+  (is (= [:neon/load]
          (vec (rest (workflow/wire-fn :neon/start {:green/event :delete})))))
-  (is (= [:neon/ssh-cleanup]
+  (is (= []
          (vec (rest (workflow/wire-fn :neon/infrastructure {:green/event :delete})))))
-  (is (empty? (rest (workflow/wire-fn :neon/ssh-cleanup {:green/event :delete})))))
+)

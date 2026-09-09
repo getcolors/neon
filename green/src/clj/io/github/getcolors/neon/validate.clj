@@ -1,5 +1,5 @@
 (ns io.github.getcolors.neon.validate
-  (:require [clojure.string :as str]
+  (:require [io.github.getcolors.compute-planning :as planning] [io.github.getcolors.compute :as library] [io.github.getcolors.neon.compute :as compute] [clojure.string :as str]
             [green.cli :as green-cli]
             [io.github.getcolors.once.ssh :as once-ssh]
             [io.github.getcolors.once.validate :as once-validate]))
@@ -23,9 +23,7 @@
    :neon-tenant-id :neon-timeline-id
    :neon-database :neon-role
    :neon-r2-bucket :neon-r2-endpoint :neon-r2-region
-   :vultr-region :vultr-plan :vultr-os-id
-   :vultr-ssh-sources
-   :r2-bucket :r2-endpoint])
+])
 
 (def image-keys [:neon-image :neon-compute-image])
 
@@ -50,14 +48,13 @@
   every label, including the firewall's, derives from this and never from the
   raw override key or a second copy of the profile (§3)."
   [opts]
-  (let [override (:vultr-name opts)]
-    (if (placeholder? override) (str (:profile opts)) (str/trim (str override)))))
+  (get-in (planning/plan-deployment opts compute/topology (compute/requirements opts)) [:cluster :nodes 0 :name]))
 
 (defn keygen?
   "Whether this deployment owns its machine keypair. Delegates to ONCE, the
   standard's reference implementation, so one rule decides it everywhere."
   [opts]
-  (once-ssh/keygen? opts))
+  (= "managed" (get-in (planning/plan-deployment opts compute/topology (compute/requirements opts)) [:key :mode])))
 
 (defn env-errors [env]
   (when (not-empty (str (get env profile-par)))
@@ -67,10 +64,7 @@
   (vec
    (concat
     (for [k required :when (missing? (get opts k))] (str k " is required"))
-    (when-not (= "vultr" (:provider-compute opts))
-      [":provider-compute must be vultr"])
-    (when-not (contains? #{"local" "s3" "r2"} (:provider-backend opts))
-      [":provider-backend must be local, s3, or r2"])
+    (compute/errors opts)
     (when-not (boolean? (:compute-prevent-destroy opts))
       [":compute-prevent-destroy must be true or false"])
     (for [k image-keys
@@ -106,16 +100,15 @@
     (when-not (or (missing? (:neon-r2-endpoint opts))
                   (re-matches url-re (str (:neon-r2-endpoint opts))))
       [":neon-r2-endpoint must be an https URL"])
-    (when-not (or (missing? (:vultr-os-id opts)) (integer? (:vultr-os-id opts)))
-      [":vultr-os-id must be Vultr's numeric operating-system id"]))))
+)))
 
 (defn backend-secrets [opts]
-  (:secrets (get-in once-validate/providers
-                    [:provider-backend (:provider-backend opts)])))
+  (:secrets (get-in library/registry
+                    [:backend (keyword (:provider-backend opts))])))
 
 (def provider-secrets
   "What talking to the provider needs, on any real event."
-  [:vultr-api-key])
+  [])
 
 (def application-secrets
   "What converging the machine needs, and therefore only a create: the R2 pair
@@ -136,7 +129,7 @@
 
 (defn tofu-env [opts slot]
   (case slot
-    :provider-compute {:vultr-api-key "VULTR_API_KEY"}
+    :provider-compute {}
     :provider-backend (:tofu-env (get-in once-validate/providers
                                          [:provider-backend (:provider-backend opts)]) {})
     {}))

@@ -1,5 +1,5 @@
 (ns io.github.getcolors.neon.tools
-  (:require [cheshire.core :as json]
+  (:require [io.github.getcolors.neon.compute :as compute] [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.walk :as walk]
             [green.ansible :as ansible]
@@ -47,23 +47,7 @@
 
 ;; ---------------------------------------------------------------- compute
 
-(defn infrastructure-data [opts]
-  (assoc opts
-         :compute-name (validate/compute-name opts)
-         :ssh-keygen (validate/keygen? opts)
-         :ssh-sources-hcl (tofu/hcl-list (cidrs opts :vultr-ssh-sources))))
-
-(defn infrastructure-step [opts]
-  (let [dir (tool-dir opts infrastructure-tool)
-        specs [(spec (template "infrastructure" "main.tf") (str dir "/main.tf")
-                     (infrastructure-data opts))]
-        result (tofu/tofu-with-spec opts specs
-                                    {:dir dir :env (credential-env opts :provider-compute)})]
-    (cond
-      (wf/failed? result) result
-      (= :build (:green/event opts)) (merge result (fallback-params opts))
-      (= :delete (:green/event opts)) result
-      :else (merge result (fallback-params opts) (output-params result)))))
+(def infrastructure-step compute/infrastructure-step)
 
 ;; ---------------------------------------------------------- ansible (local)
 
@@ -74,7 +58,7 @@
   Standard §6)."
   [opts]
   (assoc opts
-         :ssh-keygen (validate/keygen? opts)
+         :ssh-keygen (if (:colors-compute/key opts) (= "managed" (get-in opts [:colors-compute/key :mode])) (validate/keygen? opts))
          :ssh-config-identity-file (ssh-config/identity-file opts)))
 
 (defn ansible-local-specs [opts]
@@ -104,7 +88,7 @@
   (json/generate-string
    {:all {:children {:neon {:hosts {(:profile opts)
                                     {:ansible_host (or (:ip opts) "192.0.2.10")
-                                     :ansible_user "root"}}}}}}
+                                     :ansible_user (or (:user opts) "root")}}}}}}
    {:pretty true}))
 
 (defn ansible-data
@@ -119,7 +103,7 @@
   [opts]
   (assoc opts
          :ip (or (:ip opts) "192.0.2.10")
-         :ssh-keygen (validate/keygen? opts)
+         :ssh-keygen (if (:colors-compute/key opts) (= "managed" (get-in opts [:colors-compute/key :mode])) (validate/keygen? opts))
          :neon-r2-prefix (r2-prefix opts)))
 
 (defn ansible-specs [opts]
@@ -147,7 +131,7 @@
       (ansible/ansible-with-spec opts
         {:dir dir :inventory "inventory.json"
          :playbooks {:create "main.yml" :delete "cleanup.yml"}
-         :host-key-checking false}
+         :host-key-checking false :private-key (:ssh-private-key-path opts)}
         (ansible-specs opts)))))
 
 ;; ------------------------------------------------------------- acceptance
@@ -184,6 +168,7 @@
   [opts port]
   ["bash" "-c"
    (str "ssh -f -o ExitOnForwardFailure=yes -o BatchMode=yes"
+        (when-let [path (:ssh-private-key-path opts)] (str " -i '" (str/replace (str path) "'" "'\\''") "'"))
         " -L " port ":127.0.0.1:55433 "
         (ssh-config/host-alias opts) " sleep 45 >/dev/null 2>&1")])
 
@@ -198,8 +183,7 @@
   "The generated application-role password, read over SSH and held only in this
   process. Never merged into opts, never printed."
   [opts]
-  (let [r (run-quiet ["ssh" "-o" "BatchMode=yes" (ssh-config/host-alias opts)
-                      "cat" "/etc/neon/secrets/neon_role_password"]
+  (let [r (run-quiet (vec (concat ["ssh" "-o" "BatchMode=yes"] (when-let [path (:ssh-private-key-path opts)] ["-i" path]) [(ssh-config/host-alias opts) "cat" "/etc/neon/secrets/neon_role_password"]))
                      {} 20000)]
     (when (zero? (:exit r)) (str/trim (str (:out r))))))
 
