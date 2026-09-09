@@ -157,3 +157,5 @@ paths already encode the repository. Never add one tag without the other.
 ## Git
 
 Work on the current branch. Do not commit or push unless explicitly authorized.
+
+When used as an application-template dependency, the Red facade accepts the consumer's `colors-compute-red` peer. The native development manifest and standalone launcher pin the tested library revision. This avoids duplicate Git dependency resolution while letting consumers upgrade the compute library independently of Neon templates.
