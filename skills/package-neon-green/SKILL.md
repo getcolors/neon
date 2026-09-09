@@ -94,3 +94,5 @@ credential, and the recovery procedure.
 Compute is delegated to the pinned `colors-compute` library. Its singleton topology preserves SSH-only public ingress and loopback application services. R2 or S3 state lives under `<profile>/compute/shared.tfstate` and `<profile>/compute/nodes/0.tfstate`, with a deployment journal; local compute state is unsupported. Existing `<profile>/neon-infrastructure.tfstate` is refused for explicit operator migration, never silently adopted. Build renders shared/node plans with their remote backend configuration.
 
 The package owns a locked profile SSH alias updater. Managed keys add `IdentityFile ~/.ssh/<profile>`; external private paths are explicit Ansible/acceptance inputs. The alias is removed before compute destruction. Application images, data-prefix ownership markers, generated passwords, and acceptance gates are unchanged. No live deployment was performed for this migration.
+
+Validated retired compute prevents remote Ansible during delete even when caller input retains a stale IP or private-key path. Remaining application and local cleanup keeps its existing ordering. Normal creation still converges the application.

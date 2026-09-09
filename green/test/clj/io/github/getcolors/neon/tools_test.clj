@@ -60,3 +60,13 @@
 (deftest acceptance-is-skipped-outside-a-real-create
   (doseq [event [:build :delete]]
     (is (= 0 (:green/exit (tools/acceptance-step (assoc (fixture) :green/event event)))))))
+
+(deftest retired-delete-never-uses-stale-host
+ (require '[green.ansible :as retired-ansible])
+ (doseq [event [:create :delete] retired [true false]]
+  (let [calls (atom 0)]
+   (with-redefs-fn {(resolve 'io.github.getcolors.neon.tools/ansible-specs) (constantly [])
+                   (resolve 'retired-ansible/ansible-with-spec) (fn [opts & _] (swap! calls inc) (assoc opts :green/exit 0))}
+    (fn [] (let [result (tools/ansible-step {:profile "test" :workdir "/tmp/unused-retired-test" :green/event event :neon/already-destroyed retired :ip "203.0.113.19" :ssh-private-key-path "/tmp/removed-key"})]
+             (is (= 0 (:green/exit result)))
+             (is (= (if (and (= event :delete) retired) 0 1) @calls))))))))
