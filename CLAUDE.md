@@ -159,3 +159,5 @@ paths already encode the repository. Never add one tag without the other.
 Work on the current branch. Do not commit or push unless explicitly authorized.
 
 When used as an application-template dependency, the Red facade accepts the consumer's `colors-compute-red` peer. The native development manifest and standalone launcher pin the tested library revision. This avoids duplicate Git dependency resolution while letting consumers upgrade the compute library independently of Neon templates.
+
+Blue declares a normal library requirement when consumed; its development group and standalone launcher carry the immutable tested library pin. Green consumers override the library coordinate through their top-level dependency map.
