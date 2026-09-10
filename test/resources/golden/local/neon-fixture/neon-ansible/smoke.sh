@@ -55,7 +55,13 @@ fi
 # rclone, not awscli: Ubuntu 24.04 carries no awscli package. Configured
 # entirely from the environment — no config file to manage or leak.
 set -a; . /etc/neon/r2.env; set +a
-export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+export RCLONE_CONFIG_R2_TYPE=s3
+# Native S3 must use AWS request behavior; retain the R2 defaults elsewhere.
+case "$endpoint" in
+  https://*.amazonaws.com|https://*.amazonaws.com/|https://*.amazonaws.com.cn|https://*.amazonaws.com.cn/) RCLONE_CONFIG_R2_PROVIDER=AWS ;;
+  *) RCLONE_CONFIG_R2_PROVIDER=Cloudflare ;;
+esac
+export RCLONE_CONFIG_R2_PROVIDER
 export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
 export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_R2_ENDPOINT="$endpoint"
