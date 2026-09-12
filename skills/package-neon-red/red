@@ -36,7 +36,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-neon-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-neon-red": "github:getcolors/neon#a5f077b77eabad80dfb175b24d72ad551cd1280c",
+  "package-neon-red": "github:getcolors/neon#903097421bbf23a5c7692c4d70fb16439b257281",
   "colors-compute-red": "github:getcolors/colors-compute#ae28ea74962bb1897fa6365c143c1d43ac1fe095",
   "package-once-red": "github:getcolors/once#a1fe1be7a427dd2e406ff7befd1c43a53e7c3618",
   // The Red SDK is a peer of colors-compute-red, not a dependency: a cold

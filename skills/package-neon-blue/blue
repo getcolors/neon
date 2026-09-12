@@ -4,7 +4,7 @@
 # dependencies = ["package-neon-blue", "blue", "colors-compute-blue @ git+https://github.com/getcolors/colors-compute.git@ae28ea74962bb1897fa6365c143c1d43ac1fe095#subdirectory=blue"]
 #
 # [tool.uv.sources]
-# package-neon-blue = { git = "https://github.com/getcolors/neon.git", rev = "a5f077b77eabad80dfb175b24d72ad551cd1280c", subdirectory = "blue" }
+# package-neon-blue = { git = "https://github.com/getcolors/neon.git", rev = "903097421bbf23a5c7692c4d70fb16439b257281", subdirectory = "blue" }
 # blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
 #
 # [tool.uv]
